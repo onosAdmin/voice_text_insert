@@ -1,13 +1,26 @@
 audio:
-  default_microphone: "default"
-
+  default_microphone: alsa_input.usb-Microsoft_Microsoft___LifeCam_HD-3000-02.pro-input-0
+dictionary:
+  a capo: 'r'
+  due punti: ':'
+  punto: .
+  punto e virgola: ;
+  punto esclamativo: '!'
+  punto interrogativo: '?'
+  spazio: ' '
+  virgola: ','
+keywords:
+  alexa correggi: correggi
+  alexa inserisci: inserisci
+  alexa scrivi: scrivi
+  alexa cancella: cancella
 llm:
-  model1: "anthropic/claude-3-haiku"
-  model2: "meta-llama/llama-3.2-3b-instruct"
+  api_key: ''
   default_model: 1
-  api_key: ""
-
+  model1: anthropic/claude-3-haiku
+  model2: meta-llama/llama-3.2-3b-instruct
 settings:
-  timeout_seconds: 40
-  popup_position: "top-right"
-  language: "it"
+  language: it
+  popup_position: top-right
+  timeout_seconds: 6000
+  vosk_model_path: /home/marco/voice_text_insert/model/vosk-model-small-it-0.22
