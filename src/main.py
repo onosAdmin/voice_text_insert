@@ -7,16 +7,25 @@ import subprocess
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, AppIndicator3
+from gi.repository import Gtk, Gdk, GLib
 
-from config import ConfigManager
-from audio_manager import AudioManager
-from voice_recognizer import VoiceRecognizer
-from mouse_controller import MouseController
-from llm_corrector import LLMCorrector
-from popup_window import PopupWindow
-from settings_window import SettingsWindow
-from tray_icon import TrayIcon
+try:
+    gi.require_version("AyatanaAppIndicator3", "0.1")
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator3
+except (ValueError, ImportError):
+    try:
+        from gi.repository import AppIndicator3
+    except ImportError:
+        AppIndicator3 = None
+
+from .config import ConfigManager
+from .audio_manager import AudioManager
+from .voice_recognizer import VoiceRecognizer
+from .mouse_controller import MouseController
+from .llm_corrector import LLMCorrector
+from .popup_window import PopupWindow
+from .settings_window import SettingsWindow
+from .tray_icon import TrayIcon
 
 
 class VoiceTextInsertApp:
@@ -24,7 +33,14 @@ class VoiceTextInsertApp:
         self.config = ConfigManager("config.yaml")
         self.audio_manager = AudioManager(self.config)
         self.mouse_controller = MouseController()
-        self.recognizer = VoiceRecognizer()
+
+        settings = self.config.get_settings()
+        model_path = settings.get("vosk_model_path", "model")
+        keywords = self.config.get_keywords()
+        dictionary = self.config.get_dictionary()
+        self.recognizer = VoiceRecognizer(
+            model_path=model_path, keywords=keywords, dictionary=dictionary
+        )
 
         llm_config = self.config.get_llm_config()
         self.llm_corrector = LLMCorrector(llm_config["api_key"])
@@ -59,16 +75,68 @@ class VoiceTextInsertApp:
         print("\a")
 
     def _setup_tray(self):
-        self.indicator = AppIndicator3.Indicator.new(
-            "voice-text-insert",
-            "audio-input-microphone",
-            AppIndicator3.IndicatorCategory.APP_INDICATOR,
-        )
+        # Skip AppIndicator and use StatusIcon directly for better compatibility
+        self._setup_status_icon()
+        return
 
-        self.tray = TrayIcon(on_settings=self._show_settings, on_quit=self._quit)
+    def _setup_status_icon(self):
+        try:
+            gi.require_version("Gtk", "3.0")
+            from gi.repository import Gtk, GdkPixbuf
 
-        self.indicator.set_menu(self.tray.get_menu())
-        self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+            self.status_icon = Gtk.StatusIcon()
+
+            # Try to load icon from file
+            icon_paths = [
+                "/usr/share/icons/hicolor/32x32/apps/audio-x-generic.png",
+                "/usr/share/icons/gnome/32x32/apps/audio-x-generic.png",
+                "/usr/share/icons/breeze/32x32/apps/audio-x-generic.png",
+                "/usr/share/pixmaps/gnome-dev-microphone.png",
+            ]
+
+            icon_loaded = False
+            for icon_path in icon_paths:
+                try:
+                    pixbuf = GdkPixbuf.Pixbuf.new_from_file(icon_path)
+                    self.status_icon.set_from_pixbuf(pixbuf)
+                    print(f"Loaded icon from: {icon_path}")
+                    icon_loaded = True
+                    break
+                except Exception as e:
+                    continue
+
+            if not icon_loaded:
+                # Fallback to theme icons
+                icon_theme = Gtk.IconTheme.get_default()
+                icon_names = ["audio-x-generic", "audio-input-microphone", "microphone"]
+                for icon_name in icon_names:
+                    try:
+                        if icon_theme.has_icon(icon_name):
+                            self.status_icon.set_from_icon_name(icon_name)
+                            print(f"Loaded icon from theme: {icon_name}")
+                            break
+                    except:
+                        continue
+
+            self.status_icon.set_tooltip_text(
+                "Voice Text Insert - Clicca per impostazioni"
+            )
+
+            self.tray = TrayIcon(on_settings=self._show_settings, on_quit=self._quit)
+            self.status_icon.connect("button-press-event", self._on_status_icon_click)
+            self.status_icon.set_visible(True)
+
+            print(f"StatusIcon visible: {self.status_icon.get_visible()}")
+            print(f"StatusIcon size: {self.status_icon.get_size()}")
+            print("StatusIcon setup complete")
+        except Exception as e:
+            import traceback
+
+            print(f"Error setting up StatusIcon: {e}")
+            traceback.print_exc()
+
+    def _on_status_icon_click(self, icon, event):
+        self.tray.get_menu().popup(None, None, None, None, event.button, event.time)
 
     def _show_settings(self):
         devices = self.audio_manager.list_devices()
@@ -89,6 +157,7 @@ class VoiceTextInsertApp:
 
             try:
                 import pyaudio
+                import json
 
                 self.recognizer.audio = pyaudio.PyAudio()
 
@@ -109,15 +178,22 @@ class VoiceTextInsertApp:
                     frames_per_buffer=1024,
                 )
 
+                recognizer = self.recognizer.create_recognizer()
+
                 while self.listening or not self.listening:
+                    if not self.recognizer.stream:
+                        break
                     if not self.recognizer.stream.is_active():
                         break
-                    data = self.recognizer.stream.read(
-                        1024, exception_on_overflow=False
-                    )
-                    if self.recognizer.recognizer.AcceptWaveform(data):
-                        result = self.recognizer.recognizer.Result()
-                        import json
+                    try:
+                        data = self.recognizer.stream.read(
+                            1024, exception_on_overflow=False
+                        )
+                    except Exception as e:
+                        print(f"Errore lettura background: {e}")
+                        break
+                    if recognizer.AcceptWaveform(data):
+                        result = recognizer.Result()
 
                         result_dict = json.loads(result)
                         text = result_dict.get("text", "")
@@ -127,14 +203,61 @@ class VoiceTextInsertApp:
                                 command = self.recognizer.get_command(text)
                                 print(f"Comando rilevato: {command}")
                                 if command == "scrivi":
+                                    recognizer = self.recognizer.create_recognizer()
                                     self._start_recording()
                                 elif command == "inserisci":
+                                    recognizer = self.recognizer.create_recognizer()
+                                    self.listening = False
+                                    try:
+                                        if self.recognizer.stream:
+                                            if self.recognizer.stream.is_active():
+                                                self.recognizer.stream.stop_stream()
+                                            self.recognizer.stream.close()
+                                    except:
+                                        pass
+                                    try:
+                                        if self.recognizer.audio:
+                                            self.recognizer.audio.terminate()
+                                    except:
+                                        pass
+                                    self.recognizer.stream = None
+                                    self.recognizer.audio = None
+                                    time.sleep(0.5)
                                     self._insert_text()
+                                    break
                                 elif command == "correggi":
+                                    recognizer = self.recognizer.create_recognizer()
+                                    self.listening = False
+                                    try:
+                                        if self.recognizer.stream:
+                                            if self.recognizer.stream.is_active():
+                                                self.recognizer.stream.stop_stream()
+                                            self.recognizer.stream.close()
+                                    except:
+                                        pass
+                                    try:
+                                        if self.recognizer.audio:
+                                            self.recognizer.audio.terminate()
+                                    except:
+                                        pass
+                                    self.recognizer.stream = None
+                                    self.recognizer.audio = None
+                                    time.sleep(0.5)
                                     self._correct_and_insert()
+                                    break
             except Exception as e:
                 print(f"Errore nel loop di ascolto: {e}")
-                time.sleep(1)
+                try:
+                    if self.recognizer.stream:
+                        self.recognizer.stream.close()
+                except:
+                    pass
+                try:
+                    if self.recognizer.audio:
+                        self.recognizer.audio.terminate()
+                except:
+                    pass
+                time.sleep(1.5)
                 if not self.listening:
                     self._start_background_listening()
 
@@ -142,20 +265,78 @@ class VoiceTextInsertApp:
         self.listening_thread = threading.Thread(target=listen_loop, daemon=True)
         self.listening_thread.start()
 
+    def _safe_append_text(self, text):
+        try:
+            if self.popup and not self.popup.is_closed():
+                self.popup.append_text(text)
+        except Exception as e:
+            print(f"ERRORE _safe_append_text: {e}")
+        return False
+
+    def _delete_last_word(self):
+        try:
+            if self.popup and not self.popup.is_closed():
+                self.popup.delete_last_word()
+                text = self.popup.get_text()
+                self.current_text = text
+        except Exception as e:
+            print(f"ERRORE _delete_last_word: {e}")
+        return False
+
+    def _close_popup_and_restart(self):
+        try:
+            if self.popup and not self.popup.is_closed():
+                self.popup.close()
+                self.popup = None
+        except Exception as e:
+            print(f"ERRORE _close_popup_and_restart: {e}")
+        self._restart_background()
+        return False
+
+    def _show_ready_status(self):
+        try:
+            if self.popup and not self.popup.is_closed():
+                self.popup.set_status("Pronto. Dì 'inserisci' o 'correggi'")
+        except Exception as e:
+            print(f"ERRORE _show_ready_status: {e}")
+        return False
+
     def _start_recording(self):
         self._play_beep()
+        self.listening = False
+        try:
+            if self.recognizer.stream:
+                if self.recognizer.stream.is_active():
+                    self.recognizer.stream.stop_stream()
+                self.recognizer.stream.close()
+        except:
+            pass
+        try:
+            if self.recognizer.audio:
+                self.recognizer.audio.terminate()
+        except:
+            pass
+        self.recognizer.stream = None
+        self.recognizer.audio = None
 
-        Gdk.threads_add_idle(Gtk.main_quit)
+        def create_popup():
+            time.sleep(0.3)
+            self.popup = PopupWindow()
+            self.popup.set_cancel_callback(self._on_cancel)
+            self.popup.show_recording()
+            self.popup.show_all()
+            self.current_text = ""
+            self.recording = True
+            self._start_recording_thread()
+            return False
 
-        self.popup = PopupWindow()
-        self.popup.set_cancel_callback(self._on_cancel)
-        self.popup.show_recording()
-        self.popup.show_all()
+        Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, create_popup)
 
-        self.current_text = ""
-        self.recording = True
-
+    def _start_recording_thread(self):
         def record():
+            stream = None
+            audio = None
+            stream_closed = False
             try:
                 import pyaudio
                 import json
@@ -180,14 +361,21 @@ class VoiceTextInsertApp:
                     frames_per_buffer=1024,
                 )
 
-                recognizer = self.recognizer.recognizer
+                recognizer = self.recognizer.create_recognizer()
                 timeout = self.settings.get("timeout_seconds", 40)
                 start_time = time.time()
 
                 while self.recording and (time.time() - start_time) < timeout:
-                    if not stream.is_active():
+                    if not stream.is_active() or stream_closed:
                         break
-                    data = stream.read(1024, exception_on_overflow=False)
+                    try:
+                        data = stream.read(1024, exception_on_overflow=False)
+                    except OSError:
+                        print("Timeout lettura audio, interrompo")
+                        break
+                    except Exception as e:
+                        print(f"Errore lettura audio: {e}")
+                        break
                     if recognizer.AcceptWaveform(data):
                         result = json.loads(recognizer.Result())
                         text = result.get("text", "")
@@ -195,35 +383,96 @@ class VoiceTextInsertApp:
                             if self.recognizer.is_keyword(text):
                                 command = self.recognizer.get_command(text)
                                 if command == "inserisci":
-                                    self._insert_text()
-                                    break
+                                    self.recording = False
+                                    stream_closed = True
+                                    try:
+                                        if stream.is_active():
+                                            stream.stop_stream()
+                                    except:
+                                        pass
+                                    try:
+                                        stream.close()
+                                    except:
+                                        pass
+                                    try:
+                                        audio.terminate()
+                                    except:
+                                        pass
+                                    Gdk.threads_add_idle(
+                                        GLib.PRIORITY_DEFAULT, self._insert_text
+                                    )
+                                    return
                                 elif command == "correggi":
-                                    self._correct_and_insert()
-                                    break
+                                    self.recording = False
+                                    stream_closed = True
+                                    try:
+                                        if stream.is_active():
+                                            stream.stop_stream()
+                                    except:
+                                        pass
+                                    try:
+                                        stream.close()
+                                    except:
+                                        pass
+                                    try:
+                                        audio.terminate()
+                                    except:
+                                        pass
+                                    Gdk.threads_add_idle(
+                                        GLib.PRIORITY_DEFAULT, self._correct_and_insert
+                                    )
+                                    return
+                                elif command == "cancella":
+                                    GLib.idle_add(self._delete_last_word)
+                                    recognizer = self.recognizer.create_recognizer()
                             else:
-                                self.current_text += " " + text
-                                Gdk.threads_add_idle(
-                                    Gdk.PRIORITY_DEFAULT, self.popup.append_text, text
-                                )
+                                if self.popup and not self.popup.is_closed():
+                                    try:
+                                        replaced_text = (
+                                            self.recognizer.apply_dictionary(text)
+                                        )
+                                        self.current_text += " " + replaced_text
+                                        GLib.idle_add(
+                                            self._safe_append_text,
+                                            replaced_text,
+                                        )
+                                    except Exception as e:
+                                        print(f"ERRORE append text: {e}")
 
-                stream.close()
-                audio.terminate()
-
-                if self.recording and self.current_text.strip():
-                    Gdk.threads_add_idle(
-                        Gdk.PRIORITY_DEFAULT,
-                        self.popup.set_status,
-                        "Pronto. Di 'inserisci' o 'correggi'",
-                    )
+                print("DEBUG: Recording loop ended for the timout set in config.yaml")
+                self.recording = False
+                if self.current_text.strip():
+                    print("DEBUG: calling _show_ready_status")
+                    GLib.idle_add(self._show_ready_status)
+                else:
+                    print("DEBUG: no text, closing popup and restarting")
+                    GLib.idle_add(self._close_popup_and_restart)
 
             except Exception as e:
                 print(f"Errore registrazione: {e}")
+            finally:
+                try:
+                    if stream and not stream_closed:
+                        stream_closed = True
+                        try:
+                            if stream.is_active():
+                                stream.stop_stream()
+                        except:
+                            pass
+                        try:
+                            stream.close()
+                        except:
+                            pass
+                    if audio:
+                        try:
+                            audio.terminate()
+                        except:
+                            pass
+                except:
+                    pass
 
         self.recording_thread = threading.Thread(target=record, daemon=True)
         self.recording_thread.start()
-
-        Gdk.threads_init()
-        Gtk.main()
 
     def _on_cancel(self, action):
         if action == "cancel":
@@ -232,17 +481,27 @@ class VoiceTextInsertApp:
                 self.popup.close()
                 self.popup = None
             self._restart_background()
+        elif action == "copy":
+            self.recording = False
+            if self.popup:
+                text = self.popup.get_text()
+                self.current_text = text
+                self.popup.close()
+                self.popup = None
+            self._restart_background()
 
     def _insert_text(self):
         self.recording = False
         if self.popup:
             self.popup.show_processing()
+            text = self.popup.get_text()
+            self.current_text = text
 
         def do_insert():
             time.sleep(0.2)
             self.mouse_controller.click_and_type(self.current_text)
             if self.popup:
-                Gdk.threads_add_idle(Gdk.PRIORITY_DEFAULT, self.popup.close)
+                Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, self.popup.close)
                 self.popup = None
             self._restart_background()
 
@@ -260,14 +519,14 @@ class VoiceTextInsertApp:
             time.sleep(0.2)
             self.mouse_controller.click_and_type(corrected)
             if self.popup:
-                Gdk.threads_add_idle(Gdk.PRIORITY_DEFAULT, self.popup.close)
+                Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, self.popup.close)
                 self.popup = None
             self._restart_background()
 
         threading.Thread(target=do_correct, daemon=True).start()
 
     def _restart_background(self):
-        time.sleep(0.5)
+        time.sleep(1.5)
         self._start_background_listening()
 
     def _quit(self):
@@ -288,4 +547,14 @@ class VoiceTextInsertApp:
 
 
 if __name__ == "__main__":
-    app = VoiceTextInsertApp()
+    try:
+        print("Creating VoiceTextInsertApp...")
+        app = VoiceTextInsertApp()
+        print("App created, calling Gtk.main()...")
+        Gtk.main()
+        print("Gtk.main() returned")
+    except Exception as e:
+        import traceback
+
+        print(f"Error in main: {e}")
+        traceback.print_exc()
