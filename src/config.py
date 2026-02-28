@@ -26,6 +26,7 @@ class ConfigManager:
                 "timeout_seconds": 40,
                 "popup_position": "top-right",
                 "language": "it",
+                "vosk_model_path": "model",
             },
         }
 
@@ -72,4 +73,19 @@ class ConfigManager:
             "timeout_seconds": self.get("settings.timeout_seconds", 40),
             "popup_position": self.get("settings.popup_position", "top-right"),
             "language": self.get("settings.language", "it"),
+            "vosk_model_path": self.get("settings.vosk_model_path", "model"),
         }
+
+    def get_keywords(self) -> dict:
+        keywords = self.get("keywords", {})
+        if not keywords:
+            return {
+                "computer scrivi": "scrivi",
+                "computer inserisci": "inserisci",
+                "pc correggi": "correggi",
+                "computer cancella": "cancella",
+            }
+        return keywords
+
+    def get_dictionary(self) -> dict:
+        return self.get("dictionary", {})

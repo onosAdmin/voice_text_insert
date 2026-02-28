@@ -5,13 +5,20 @@ import pyaudio
 
 
 class VoiceRecognizer:
-    KEYWORDS = {
+    DEFAULT_KEYWORDS = {
         "computer scrivi": "scrivi",
         "computer inserisci": "inserisci",
         "pc correggi": "correggi",
+        "computer cancella": "cancella",
     }
 
-    def __init__(self, model_path: str = "model", sample_rate: int = 16000):
+    def __init__(
+        self,
+        model_path: str = "model",
+        sample_rate: int = 16000,
+        keywords: dict = None,
+        dictionary: dict = None,
+    ):
         self.model_path = model_path
         self.sample_rate = sample_rate
         self.model = None
@@ -19,21 +26,34 @@ class VoiceRecognizer:
         self.stream = None
         self.audio = None
         self._callback = None
+        self.keywords = keywords or self.DEFAULT_KEYWORDS
+        self.dictionary = dictionary or {}
 
     def load_model(self):
         self.model = Model(self.model_path)
         self.recognizer = KaldiRecognizer(self.model, self.sample_rate)
 
+    def create_recognizer(self):
+        return KaldiRecognizer(self.model, self.sample_rate)
+
     def is_keyword(self, text: str) -> bool:
         text_lower = text.lower().strip()
-        return any(text_lower.startswith(kw) for kw in self.KEYWORDS.keys())
+        return any(text_lower.startswith(kw) for kw in self.keywords.keys())
 
     def get_command(self, text: str) -> Optional[str]:
         text_lower = text.lower().strip()
-        for kw, cmd in self.KEYWORDS.items():
+        for kw, cmd in self.keywords.items():
             if text_lower.startswith(kw):
                 return cmd
         return None
+
+    def apply_dictionary(self, text: str) -> str:
+        if not hasattr(self, "dictionary") or not self.dictionary:
+            return text
+        result = text
+        for word, replacement in self.dictionary.items():
+            result = result.replace(word, replacement)
+        return result
 
     def start_listening(self, callback: Callable[[str], None], device: str = None):
         self._callback = callback

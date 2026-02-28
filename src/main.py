@@ -245,6 +245,9 @@ class VoiceTextInsertApp:
                                     time.sleep(0.5)
                                     self._correct_and_insert()
                                     break
+                                elif command == "cancella":
+                                    GLib.idle_add(self._delete_last_word)
+                                    recognizer = self.recognizer.create_recognizer()
             except Exception as e:
                 print(f"Errore nel loop di ascolto: {e}")
                 try:
