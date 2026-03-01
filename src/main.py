@@ -203,10 +203,8 @@ class VoiceTextInsertApp:
                     text = ""
                     confidence = 0.0
                     if len(self.recognizer.recognizers) > 1:
-                        text, confidence, is_primary = (
-                            self.recognizer.process_audio_multi(data)
-                        )
-                        print(f"DEBUG BG: returned text='{text}'")
+                        result = self.recognizer.process_audio_multi(data)
+                        text = result[0] if result else ""
                     else:
                         if recognizer and recognizer.AcceptWaveform(data):
                             result = recognizer.Result()
@@ -398,10 +396,8 @@ class VoiceTextInsertApp:
                     text = ""
                     confidence = 0.0
                     if len(self.recognizer.recognizers) > 1:
-                        text, confidence, is_primary = (
-                            self.recognizer.process_audio_multi(data)
-                        )
-                        print(f"DEBUG REC: returned text='{text}'")
+                        result = self.recognizer.process_audio_multi(data)
+                        text = result[0] if result else ""
                     else:
                         if recognizer and recognizer.AcceptWaveform(data):
                             result = json.loads(recognizer.Result())
