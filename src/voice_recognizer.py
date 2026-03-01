@@ -40,7 +40,11 @@ class VoiceRecognizer:
             if not config.get("enabled", True):
                 continue
             model_path = config.get("path", "model")
-            model = Model(model_path)
+            try:
+                model = Model(model_path)
+            except Exception as e:
+                print(f"Errore caricando modello {lang} da {model_path}: {e}")
+                continue
             is_primary = config.get("primary", False)
             self.models.append((model, is_primary))
             print(f"Caricato modello Vosk: {lang} (primary={is_primary})")
@@ -53,11 +57,13 @@ class VoiceRecognizer:
         return self.recognizers
 
     def create_recognizer(self):
-        for recognizer, is_primary in self.recognizers:
-            if is_primary:
-                return recognizer
         if self.recognizers:
+            for recognizer, is_primary in self.recognizers:
+                if is_primary:
+                    return recognizer
             return self.recognizers[0][0]
+        if self.models:
+            return KaldiRecognizer(self.models[0][0], self.sample_rate)
         return None
 
     def is_keyword(self, text: str) -> bool:
