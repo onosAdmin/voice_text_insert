@@ -89,3 +89,13 @@ class ConfigManager:
 
     def get_dictionary(self) -> dict:
         return self.get("dictionary", {})
+
+    def get_vosk_models(self) -> dict:
+        default_models = {
+            "it": {
+                "path": "model/vosk-model-small-it-0.22",
+                "enabled": True,
+                "primary": True,
+            }
+        }
+        return self.get("vosk_models", default_models)
