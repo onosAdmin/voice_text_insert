@@ -18,6 +18,8 @@ class VoiceRecognizer:
         sample_rate: int = 16000,
         keywords: dict = None,
         dictionary: dict = None,
+        multi_model_mode: str = "best_confidence",
+        confidence_threshold: float = 0.7,
     ):
         self.sample_rate = sample_rate
         self.models = []
@@ -34,6 +36,8 @@ class VoiceRecognizer:
                 "primary": True,
             }
         }
+        self.multi_model_mode = multi_model_mode
+        self.confidence_threshold = confidence_threshold
 
     def load_models(self):
         for lang, config in self.models_config.items():
@@ -84,6 +88,46 @@ class VoiceRecognizer:
         for word, replacement in self.dictionary.items():
             result = result.replace(word, replacement)
         return result
+
+    def _get_confidence(self, recognizer) -> float:
+        result_json = recognizer.Result()
+        result = json.loads(result_json)
+        words = result.get("result", [])
+        if not words:
+            return 0.0
+        return sum(w.get("conf", 0.0) for w in words) / len(words)
+
+    def process_audio_multi(self, data: bytes) -> tuple:
+        results = []
+        for recognizer, is_primary in self.recognizers:
+            recognizer.AcceptWaveform(data)
+            result_json = recognizer.Result()
+            result = json.loads(result_json)
+            text = result.get("text", "")
+            if text:
+                confidence = self._get_confidence(recognizer)
+                results.append((text, confidence, is_primary))
+
+        if not results:
+            return "", 0.0
+
+        if self.multi_model_mode == "best_confidence":
+            return max(results, key=lambda x: x[1])
+        else:  # primary_fallback
+            primary_result = None
+            for text, conf, is_primary in results:
+                if is_primary:
+                    primary_result = (text, conf, is_primary)
+                    if conf >= self.confidence_threshold:
+                        return primary_result
+
+            if primary_result and results:
+                best = max(results, key=lambda x: x[1])
+                if best[1] >= self.confidence_threshold:
+                    return best
+                return primary_result
+
+            return primary_result or results[0]
 
     def start_listening(self, callback: Callable[[str], None], device: str = None):
         self._callback = callback
