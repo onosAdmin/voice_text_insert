@@ -109,7 +109,7 @@ class VoiceRecognizer:
                 results.append((text, confidence, is_primary))
 
         if not results:
-            return "", 0.0
+            return "", 0.0, False
 
         if self.multi_model_mode == "best_confidence":
             return max(results, key=lambda x: x[1])
