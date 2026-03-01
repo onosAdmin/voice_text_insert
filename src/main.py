@@ -38,8 +38,15 @@ class VoiceTextInsertApp:
         vosk_models = self.config.get_vosk_models()
         keywords = self.config.get_keywords()
         dictionary = self.config.get_dictionary()
+        multi_model_mode = self.config.get_multi_model_mode()
+        confidence_threshold = self.config.get_confidence_threshold()
+
         self.recognizer = VoiceRecognizer(
-            models_config=vosk_models, keywords=keywords, dictionary=dictionary
+            models_config=vosk_models,
+            keywords=keywords,
+            dictionary=dictionary,
+            multi_model_mode=multi_model_mode,
+            confidence_threshold=confidence_threshold,
         )
 
         llm_config = self.config.get_llm_config()
@@ -192,11 +199,18 @@ class VoiceTextInsertApp:
                     except Exception as e:
                         print(f"Errore lettura background: {e}")
                         break
-                    if recognizer.AcceptWaveform(data):
-                        result = recognizer.Result()
-
-                        result_dict = json.loads(result)
-                        text = result_dict.get("text", "")
+                    text = ""
+                    confidence = 0.0
+                    if len(self.recognizer.recognizers) > 1:
+                        text, confidence, is_primary = (
+                            self.recognizer.process_audio_multi(data)
+                        )
+                    else:
+                        if recognizer and recognizer.AcceptWaveform(data):
+                            result = recognizer.Result()
+                            result_dict = json.loads(result)
+                            text = result_dict.get("text", "")
+                            confidence = 0.0
                         if text:
                             print(f"Ricevuto: {text}")
                             if self.recognizer.is_keyword(text):
@@ -379,9 +393,15 @@ class VoiceTextInsertApp:
                     except Exception as e:
                         print(f"Errore lettura audio: {e}")
                         break
-                    if recognizer.AcceptWaveform(data):
-                        result = json.loads(recognizer.Result())
-                        text = result.get("text", "")
+                    text = ""
+                    if len(self.recognizer.recognizers) > 1:
+                        text, confidence, is_primary = (
+                            self.recognizer.process_audio_multi(data)
+                        )
+                    else:
+                        if recognizer and recognizer.AcceptWaveform(data):
+                            result = json.loads(recognizer.Result())
+                            text = result.get("text", "")
                         if text:
                             if self.recognizer.is_keyword(text):
                                 command = self.recognizer.get_command(text)
