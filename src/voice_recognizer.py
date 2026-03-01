@@ -89,9 +89,7 @@ class VoiceRecognizer:
             result = result.replace(word, replacement)
         return result
 
-    def _get_confidence(self, recognizer) -> float:
-        result_json = recognizer.Result()
-        result = json.loads(result_json)
+    def _get_confidence_from_result(self, result: dict) -> float:
         words = result.get("result", [])
         if not words:
             return 0.0
@@ -105,7 +103,7 @@ class VoiceRecognizer:
             result = json.loads(result_json)
             text = result.get("text", "")
             if text:
-                confidence = self._get_confidence(recognizer)
+                confidence = self._get_confidence_from_result(result)
                 lang = (
                     list(self.models_config.keys())[i]
                     if i < len(self.models_config)

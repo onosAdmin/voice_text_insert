@@ -65,6 +65,7 @@ class VoiceTextInsertApp:
         self._play_startup_sound()
 
         self.recognizer.load_models()
+        self.recognizer.create_recognizers()
         print("Voice Text Insert avviato. Di 'computer scrivi' per iniziare.")
         self._start_background_listening()
 
