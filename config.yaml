@@ -24,3 +24,12 @@ settings:
   popup_position: top-right
   timeout_seconds: 6000
   vosk_model_path: /home/marco/voice_text_insert/model/vosk-model-small-it-0.22
+vosk_models:
+  it:
+    path: /home/marco/voice_text_insert/model/vosk-model-small-it-0.22
+    enabled: true
+    primary: true
+  en:
+    path: /home/marco/voice_text_insert/model/vosk-model-small-en-us
+    enabled: false
+    primary: false
