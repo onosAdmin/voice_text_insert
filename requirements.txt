@@ -5,3 +5,4 @@ PyGObject>=3.48.0
 xdotool
 requests>=2.31.0
 PyYAML>=6.0.1
+pyaudio-0.2.14

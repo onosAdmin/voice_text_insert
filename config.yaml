@@ -1,7 +1,7 @@
 audio:
   default_microphone: alsa_input.usb-Microsoft_Microsoft___LifeCam_HD-3000-02.pro-input-0
 dictionary:
-  a capo: 'r'
+  a capo: r
   due punti: ':'
   punto: .
   punto e virgola: ;
@@ -10,10 +10,10 @@ dictionary:
   spazio: ' '
   virgola: ','
 keywords:
+  alexa cancella: cancella
   alexa correggi: correggi
   alexa inserisci: inserisci
   alexa scrivi: scrivi
-  alexa cancella: cancella
 llm:
   api_key: ''
   default_model: 1
