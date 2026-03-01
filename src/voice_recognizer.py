@@ -98,21 +98,21 @@ class VoiceRecognizer:
     def process_audio_multi(self, data: bytes) -> tuple:
         results = []
         for i, (recognizer, is_primary) in enumerate(self.recognizers):
-            recognizer.AcceptWaveform(data)
-            result_json = recognizer.Result()
-            result = json.loads(result_json)
-            text = result.get("text", "")
-            if text:
-                confidence = self._get_confidence_from_result(result)
-                lang = (
-                    list(self.models_config.keys())[i]
-                    if i < len(self.models_config)
-                    else f"model_{i}"
-                )
-                print(
-                    f'[{lang}] text="{text}" confidence={confidence:.3f} primary={is_primary}'
-                )
-                results.append((text, confidence, is_primary))
+            if recognizer.AcceptWaveform(data):
+                result_json = recognizer.Result()
+                result = json.loads(result_json)
+                text = result.get("text", "")
+                if text:
+                    confidence = self._get_confidence_from_result(result)
+                    lang = (
+                        list(self.models_config.keys())[i]
+                        if i < len(self.models_config)
+                        else f"model_{i}"
+                    )
+                    print(
+                        f'[{lang}] text="{text}" confidence={confidence:.3f} primary={is_primary}'
+                    )
+                    results.append((text, confidence, is_primary))
 
         if not results:
             return "", 0.0, False
