@@ -1,5 +1,7 @@
 import json
 from typing import Optional, Callable
+import locale
+locale.setlocale(locale.LC_ALL, "C") #must have this before vosk import 
 from vosk import Model, KaldiRecognizer
 import pyaudio
 
@@ -57,6 +59,7 @@ class VoiceRecognizer:
         self.recognizers = []
         for model, is_primary in self.models:
             recognizer = KaldiRecognizer(model, self.sample_rate)
+            recognizer.SetWords(True) #to activate confidence print
             self.recognizers.append((recognizer, is_primary))
         return self.recognizers
 
@@ -89,18 +92,36 @@ class VoiceRecognizer:
             result = result.replace(word, replacement)
         return result
 
-    def _get_confidence_from_result(self, result: dict) -> float:
+    def old_get_confidence_from_result(self, result: dict) -> float:
         words = result.get("result", [])
         if not words:
             return 0.0
         return sum(w.get("conf", 0.0) for w in words) / len(words)
+
+    def _get_confidence_from_result(self, result: dict) -> float:
+        # 'result' is the list of word-dictionaries created by SetWords(True)
+        words = result.get("result", [])
+        if not words:
+            return 0.0
+        
+        # Calculate the mean confidence of all words in the sentence
+        total_confidence = sum(w.get("conf", 0.0) for w in words)
+        return total_confidence / len(words)
+
+
 
     def process_audio_multi(self, data: bytes) -> tuple:
         results = []
         for i, (recognizer, is_primary) in enumerate(self.recognizers):
             if recognizer.AcceptWaveform(data):
                 result_json = recognizer.Result()
-                result = json.loads(result_json)
+
+                try:
+                    result = json.loads(result_json)
+                except json.JSONDecodeError:
+                    print("JSON non valido ricevuto da Vosk:", result_json)
+                    return "", 0.0, False
+                
                 text = result.get("text", "")
                 if text:
                     confidence = self._get_confidence_from_result(result)
