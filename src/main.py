@@ -673,9 +673,9 @@ class VoiceTextInsertApp:
                 self.recording = False
                 GLib.idle_add(self._insert_text)
             elif command == "correggi":
-                # Correct and insert text
-                self.recording = False
-                GLib.idle_add(self._correct_and_insert)
+                # Correct text and show in popup (don't insert yet)
+                print("DEBUG: Executing 'correggi' command - correcting text in popup")
+                GLib.idle_add(self._correct_in_popup)
             elif command == "cancella":
                 # Delete last word
                 GLib.idle_add(self._delete_last_word)
@@ -895,20 +895,65 @@ class VoiceTextInsertApp:
 
         threading.Thread(target=do_insert, daemon=True).start()
 
-    def _correct_and_insert(self):
-        """Correct the recorded text using LLM and insert it."""
-        self.recording = False
+    def _correct_in_popup(self):
+        """Correct the recorded text using LLM and display it in the popup."""
+        print(f"DEBUG: _correct_in_popup called, popup={self.popup}")
         if self.popup and not self.popup.is_closed():
             self.popup.show_processing()
 
         def do_correct():
-            corrected = self.llm_corrector.correct_with_fallback(
-                self.current_text, self.model1, self.model2
-            )
-            time.sleep(0.2)
-            self.mouse_controller.click_and_type(corrected)
-            GLib.idle_add(self._cleanup_after_action)
+            print(f"DEBUG: do_correct starting, current_text='{self.current_text}'")
+            try:
+                corrected = self.llm_corrector.correct_with_fallback(
+                    self.current_text, self.model1, self.model2
+                )
+                print(f"DEBUG: Corrected text='{corrected}'")
+                # Update the popup with corrected text (don't close or change state)
+                GLib.idle_add(self._update_popup_text, corrected)
+            except Exception as e:
+                print(f"DEBUG: Error in do_correct: {e}")
+                import traceback
+                traceback.print_exc()
 
+        threading.Thread(target=do_correct, daemon=True).start()
+
+    def _update_popup_text(self, text: str):
+        """Update the popup text with corrected text."""
+        try:
+            if self.popup and not self.popup.is_closed():
+                self.popup.set_text(text)
+                self.current_text = text
+                print(f"DEBUG: Popup updated with corrected text: '{text}'")
+        except Exception as e:
+            print(f"Error updating popup text: {e}")
+        return False
+
+    def _correct_and_insert(self):
+        """Correct the recorded text using LLM and insert it."""
+        print(f"DEBUG: _correct_and_insert called, popup={self.popup}, recording={self.recording}")
+        self.recording = False
+        if self.popup and not self.popup.is_closed():
+            print("DEBUG: Showing processing state in popup")
+            self.popup.show_processing()
+        else:
+            print(f"DEBUG: Popup not available or closed, popup={self.popup}")
+
+        def do_correct():
+            print(f"DEBUG: do_correct starting, current_text='{self.current_text}'")
+            try:
+                corrected = self.llm_corrector.correct_with_fallback(
+                    self.current_text, self.model1, self.model2
+                )
+                print(f"DEBUG: Corrected text='{corrected}'")
+                time.sleep(0.2)
+                self.mouse_controller.click_and_type(corrected)
+                GLib.idle_add(self._cleanup_after_action)
+            except Exception as e:
+                print(f"DEBUG: Error in do_correct: {e}")
+                import traceback
+                traceback.print_exc()
+
+        print("DEBUG: Starting do_correct thread")
         threading.Thread(target=do_correct, daemon=True).start()
 
     def _cleanup_after_action(self):

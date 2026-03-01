@@ -9,14 +9,10 @@ import pyaudio
 
 class VoiceRecognizer:
     DEFAULT_KEYWORDS = {
-        "computer scrivi": "scrivi",
-        "computer inserisci": "inserisci",
-        "pc correggi": "correggi",
-        "computer cancella": "cancella",
-        "alexa scrivi": "scrivi",
-        "alexa inserisci": "inserisci",
-        "alexa correggi": "correggi",
-        "alexa cancella": "cancella",
+        "computer write": "scrivi",
+        "computer insert": "inserisci",
+        "computer correct": "correggi",
+        "computer delete": "cancella",
     }
 
     def __init__(

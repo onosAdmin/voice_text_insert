@@ -15,7 +15,7 @@ keywords:
   alexa inserisci: inserisci
   alexa scrivi: scrivi
 llm:
-  api_key: ''
+  api_key: '' #in the env
   default_model: 1
   model1: anthropic/claude-3-haiku
   model2: meta-llama/llama-3.2-3b-instruct
