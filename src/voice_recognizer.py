@@ -14,27 +14,50 @@ class VoiceRecognizer:
 
     def __init__(
         self,
-        model_path: str = "model",
+        models_config: dict = None,
         sample_rate: int = 16000,
         keywords: dict = None,
         dictionary: dict = None,
     ):
-        self.model_path = model_path
         self.sample_rate = sample_rate
-        self.model = None
-        self.recognizer = None
+        self.models = []
+        self.recognizers = []
         self.stream = None
         self.audio = None
         self._callback = None
         self.keywords = keywords or self.DEFAULT_KEYWORDS
         self.dictionary = dictionary or {}
+        self.models_config = models_config or {
+            "it": {
+                "path": "model/vosk-model-small-it-0.22",
+                "enabled": True,
+                "primary": True,
+            }
+        }
 
-    def load_model(self):
-        self.model = Model(self.model_path)
-        self.recognizer = KaldiRecognizer(self.model, self.sample_rate)
+    def load_models(self):
+        for lang, config in self.models_config.items():
+            if not config.get("enabled", True):
+                continue
+            model_path = config.get("path", "model")
+            model = Model(model_path)
+            is_primary = config.get("primary", False)
+            self.models.append((model, is_primary))
+            print(f"Caricato modello Vosk: {lang} (primary={is_primary})")
+
+    def create_recognizers(self):
+        self.recognizers = []
+        for model, is_primary in self.models:
+            recognizer = KaldiRecognizer(model, self.sample_rate)
+            self.recognizers.append((recognizer, is_primary))
+        return self.recognizers
 
     def create_recognizer(self):
-        return KaldiRecognizer(self.model, self.sample_rate)
+        if self.recognizers:
+            return self.recognizers[0][0]
+        if self.models:
+            return KaldiRecognizer(self.models[0][0], self.sample_rate)
+        return None
 
     def is_keyword(self, text: str) -> bool:
         text_lower = text.lower().strip()
@@ -78,8 +101,9 @@ class VoiceRecognizer:
 
         while self.stream.is_active():
             data = self.stream.read(1024, exception_on_overflow=False)
-            if self.recognizer.AcceptWaveform(data):
-                result = json.loads(self.recognizer.Result())
+            recognizer = self.create_recognizer()
+            if recognizer.AcceptWaveform(data):
+                result = json.loads(recognizer.Result())
                 text = result.get("text", "")
                 if text:
                     self._callback(text)
