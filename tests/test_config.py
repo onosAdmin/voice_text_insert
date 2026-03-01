@@ -70,3 +70,45 @@ settings:
         assert config.get_audio_device() == "hw:1,0"
     finally:
         os.unlink(temp_path)
+
+
+def test_get_vosk_models_default():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write("""audio:
+  default_microphone: "default"
+""")
+        temp_path = f.name
+    try:
+        config = ConfigManager(temp_path)
+        models = config.get_vosk_models()
+        assert "it" in models
+        assert models["it"]["enabled"] == True
+        assert models["it"]["primary"] == True
+    finally:
+        os.unlink(temp_path)
+
+
+def test_get_vosk_models_custom():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write("""audio:
+  default_microphone: "default"
+vosk_models:
+  it:
+    path: model/vosk-model-small-it-0.22
+    enabled: true
+    primary: true
+  en:
+    path: model/vosk-model-small-en-us
+    enabled: true
+    primary: false
+""")
+        temp_path = f.name
+    try:
+        config = ConfigManager(temp_path)
+        models = config.get_vosk_models()
+        assert "it" in models
+        assert "en" in models
+        assert models["en"]["path"] == "model/vosk-model-small-en-us"
+        assert models["en"]["enabled"] == True
+    finally:
+        os.unlink(temp_path)
