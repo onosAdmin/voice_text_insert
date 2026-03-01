@@ -178,8 +178,7 @@ class VoiceTextInsertApp:
                     frames_per_buffer=1024,
                 )
 
-                recognizers = self.recognizer.create_recognizers()
-                recognizer = recognizers[0][0] if recognizers else None
+                recognizer = self.recognizer.create_recognizer()
 
                 while self.listening or not self.listening:
                     if not self.recognizer.stream:
@@ -204,16 +203,10 @@ class VoiceTextInsertApp:
                                 command = self.recognizer.get_command(text)
                                 print(f"Comando rilevato: {command}")
                                 if command == "scrivi":
-                                    recognizers = self.recognizer.create_recognizers()
-                                    recognizer = (
-                                        recognizers[0][0] if recognizers else None
-                                    )
+                                    recognizer = self.recognizer.create_recognizer()
                                     self._start_recording()
                                 elif command == "inserisci":
-                                    recognizers = self.recognizer.create_recognizers()
-                                    recognizer = (
-                                        recognizers[0][0] if recognizers else None
-                                    )
+                                    recognizer = self.recognizer.create_recognizer()
                                     self.listening = False
                                     try:
                                         if self.recognizer.stream:
@@ -233,10 +226,7 @@ class VoiceTextInsertApp:
                                     self._insert_text()
                                     break
                                 elif command == "correggi":
-                                    recognizers = self.recognizer.create_recognizers()
-                                    recognizer = (
-                                        recognizers[0][0] if recognizers else None
-                                    )
+                                    recognizer = self.recognizer.create_recognizer()
                                     self.listening = False
                                     try:
                                         if self.recognizer.stream:
@@ -257,10 +247,7 @@ class VoiceTextInsertApp:
                                     break
                                 elif command == "cancella":
                                     GLib.idle_add(self._delete_last_word)
-                                    recognizers = self.recognizer.create_recognizers()
-                                    recognizer = (
-                                        recognizers[0][0] if recognizers else None
-                                    )
+                                    recognizer = self.recognizer.create_recognizer()
             except Exception as e:
                 print(f"Errore nel loop di ascolto: {e}")
                 try:
@@ -377,8 +364,7 @@ class VoiceTextInsertApp:
                     frames_per_buffer=1024,
                 )
 
-                recognizers = self.recognizer.create_recognizers()
-                recognizer = recognizers[0][0] if recognizers else None
+                recognizer = self.recognizer.create_recognizer()
                 timeout = self.settings.get("timeout_seconds", 40)
                 start_time = time.time()
 
@@ -441,10 +427,7 @@ class VoiceTextInsertApp:
                                     return
                                 elif command == "cancella":
                                     GLib.idle_add(self._delete_last_word)
-                                    recognizers = self.recognizer.create_recognizers()
-                                    recognizer = (
-                                        recognizers[0][0] if recognizers else None
-                                    )
+                                    recognizer = self.recognizer.create_recognizer()
                             else:
                                 if self.popup and not self.popup.is_closed():
                                     try:

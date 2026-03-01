@@ -1,0 +1,15 @@
+xdotool
+
+
+
+ testo scritto con comando vocale computer in via prova prova prova compiuta le inserisci compiuta reinserisci prova uno due come funziona bene questo fu tool a capo a capo capo due capo punto e virgola a poco a poco virgola
+ 
+ 
+ 
+ 
+ voglio poter modificare  la hot word  e poterla mettere  nel config.yaml sia computer scrivi , sia computer inserisci
+ prova uno prova due prova tra alexis scrivi pro quattro
+ mi sono accorto che si aspetto troppo dopo non posso più scrivere o meglio quello che dico viene scritto nel terminale  ma non nella finestra
+ 
+ 
+  proprio cinque
