@@ -664,6 +664,12 @@ class VoiceTextInsertApp:
             elif command == "cancella":
                 # Delete last word action
                 GLib.idle_add(self._delete_last_word)
+            elif command == "pulisci":
+                # Clear all text in popup
+                print("'pulisci' command received in LISTENING_ONLY_STATE, ignoring")
+            elif command == "chiudi":
+                # Close popup without inserting
+                print("'chiudi' command received in LISTENING_ONLY_STATE, ignoring")
 
         elif current_state == ListeningState.SHOWING_STATE:
             print(f"DEBUG: In SHOWING_STATE handling command='{command}'")
@@ -679,6 +685,40 @@ class VoiceTextInsertApp:
             elif command == "cancella":
                 # Delete last word
                 GLib.idle_add(self._delete_last_word)
+            elif command == "pulisci":
+                # Clear all text in popup
+                print("DEBUG: Executing 'pulisci' command - clearing popup text")
+                GLib.idle_add(self._clear_popup)
+            elif command == "chiudi":
+                # Close popup without inserting text (like cancel)
+                print("DEBUG: Executing 'chiudi' command - closing popup without inserting")
+                self.recording = False
+                GLib.idle_add(self._close_popup_no_insert)
+
+    def _close_popup_no_insert(self):
+        """Close the popup without inserting text."""
+        try:
+            if self.popup and not self.popup.is_closed():
+                self.popup.close()
+                self.popup = None
+                print("DEBUG: Popup closed without inserting")
+        except Exception as e:
+            print(f"Error closing popup: {e}")
+        
+        # Transition back to LISTENING_ONLY_STATE
+        self.state_machine.transition_to(ListeningState.LISTENING_ONLY_STATE)
+        return False
+
+    def _clear_popup(self):
+        """Clear all text from the popup."""
+        try:
+            if self.popup and not self.popup.is_closed():
+                self.popup.clear()
+                self.current_text = ""
+                print("DEBUG: Popup text cleared")
+        except Exception as e:
+            print(f"Error clearing popup: {e}")
+        return False
 
     def _safe_append_text_with_confidence(self, text: str, confidence: float):
         """Safely append text with confidence to the popup."""

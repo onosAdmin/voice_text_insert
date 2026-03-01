@@ -10,7 +10,7 @@ class LLMCorrector:
     def __init__(self, api_key: str):
         if len(api_key) == 0:
             self.api_key = os.getenv("API_KEY")
-            
+
         self.base_url = "https://openrouter.ai/api/v1/chat/completions"
 
     def correct_text(
@@ -37,7 +37,7 @@ class LLMCorrector:
                 "Content-Type": "application/json",
             },
             data=json.dumps({
-                "model": "google/gemini-2.5-flash-lite", # Optional
+                "model": "google/gemini-3-flash-preview", # Optional
                 "messages": [
                 {
                     "role": "user",

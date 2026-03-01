@@ -10,10 +10,12 @@ dictionary:
   spazio: ' '
   virgola: ','
 keywords:
-  alexa cancella: cancella
-  alexa correggi: correggi
-  alexa inserisci: inserisci
-  alexa scrivi: scrivi
+  galileo cancella: cancella
+  galileo chiudi: chiudi
+  galileo correggi: correggi
+  galileo manda: inserisci
+  galileo pulisci: pulisci
+  galileo scrivi: scrivi
 llm:
   api_key: '' #in the env
   default_model: 1
