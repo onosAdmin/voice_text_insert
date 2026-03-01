@@ -6,7 +6,12 @@ import threading
 
 
 class PopupWindow(Gtk.Window):
-    def __init__(self, width: int = 400, height: int = 200):
+    """Popup window for displaying recognized text with confidence scores."""
+
+    # Minimum confidence threshold for displaying recognized text (20%)
+    MIN_CONFIDENCE_THRESHOLD = 0.20
+
+    def __init__(self, width: int = 400, height: int = 220):
         super().__init__(Gtk.WindowType.TOPLEVEL)
 
         self.set_decorated(False)
@@ -41,6 +46,13 @@ class PopupWindow(Gtk.Window):
         self.textview.modify_font(Pango.FontDescription("Sans 14"))
         scrolled.add(self.textview)
 
+        # Confidence label to display recognition confidence
+        self.confidence_label = Gtk.Label()
+        self.confidence_label.set_alignment(0.5, 0.5)
+        self.confidence_label.modify_font(Pango.FontDescription("Sans 9"))
+        self.confidence_label.set_opacity(0.6)
+        self.box.pack_start(self.confidence_label, False, False, 2)
+
         self.status_label = Gtk.Label()
         self.status_label.set_alignment(0.5, 0.5)
         self.status_label.modify_font(Pango.FontDescription("Sans 10"))
@@ -58,6 +70,7 @@ class PopupWindow(Gtk.Window):
 
         self._callback = None
         self._closed = False
+        self._last_confidence = 0.0
 
     def get_text(self):
         if self._closed:
@@ -72,11 +85,79 @@ class PopupWindow(Gtk.Window):
         buffer.set_text(text)
 
     def append_text(self, text: str):
+        """Append text to the popup without confidence information."""
         if self._closed:
             return
         buffer = self.textview.get_buffer()
         end_iter = buffer.get_end_iter()
         buffer.insert(end_iter, " " + text)
+
+    def append_text_with_confidence(self, text: str, confidence: float):
+        """Append text to the popup with confidence score.
+
+        Args:
+            text: The recognized text to display
+            confidence: Confidence score (0.0 to 1.0)
+        """
+        if self._closed:
+            return
+
+        self._last_confidence = confidence
+
+        # Check if confidence is below threshold
+        if confidence < self.MIN_CONFIDENCE_THRESHOLD:
+            display_text = "[Could not understand]"
+        else:
+            display_text = text
+
+        buffer = self.textview.get_buffer()
+        end_iter = buffer.get_end_iter()
+
+        # Add space if there's existing text
+        existing_text = buffer.get_text(
+            buffer.get_start_iter(), buffer.get_end_iter(), False
+        )
+        if existing_text.strip():
+            buffer.insert(end_iter, " ")
+
+        buffer.insert(end_iter, display_text)
+
+        # Update confidence label
+        self._update_confidence_display(confidence)
+
+    def _update_confidence_display(self, confidence: float):
+        """Update the confidence label with the current confidence score.
+
+        Args:
+            confidence: Confidence score (0.0 to 1.0)
+        """
+        if self._closed:
+            return
+
+        if confidence < self.MIN_CONFIDENCE_THRESHOLD:
+            conf_text = "Confidence: Low"
+            # Use a subtle warning color
+            self.confidence_label.modify_fg(
+                Gtk.StateType.NORMAL, Gdk.color_parse("#CC0000")
+            )
+        else:
+            conf_pct = f"{confidence * 100:.1f}%"
+            conf_text = f"Confidence: {conf_pct}"
+            # Use green for good confidence
+            self.confidence_label.modify_fg(
+                Gtk.StateType.NORMAL, Gdk.color_parse("#00AA00")
+            )
+
+        self.confidence_label.set_text(conf_text)
+
+    def set_confidence(self, confidence: float):
+        """Set the confidence score display without appending text.
+
+        Args:
+            confidence: Confidence score (0.0 to 1.0)
+        """
+        self._last_confidence = confidence
+        self._update_confidence_display(confidence)
 
     def delete_last_word(self):
         if self._closed:

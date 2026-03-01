@@ -1,9 +1,25 @@
 #!/usr/bin/env python3
+"""Main application module for Voice Text Insert.
+
+This module implements a state machine-based voice recognition application
+with continuous background listening and confidence score display.
+"""
+
 import sys
 import os
 import threading
 import time
 import subprocess
+import queue
+import json
+from typing import Optional
+
+try:
+    import pyaudio
+except ImportError:
+    pyaudio = None
+    print("Warning: pyaudio not available")
+
 import gi
 
 gi.require_version("Gtk", "3.0")
@@ -26,10 +42,270 @@ from .llm_corrector import LLMCorrector
 from .popup_window import PopupWindow
 from .settings_window import SettingsWindow
 from .tray_icon import TrayIcon
+from .state_machine import ListeningStateMachine, ListeningState
+
+
+class AudioResult:
+    """Represents an audio recognition result with metadata."""
+
+    def __init__(
+        self,
+        text: str,
+        confidence: float,
+        is_primary: bool,
+        lang: str,
+        is_command: bool = False,
+        command: Optional[str] = None,
+    ):
+        self.text = text
+        self.confidence = confidence
+        self.is_primary = is_primary
+        self.lang = lang
+        self.is_command = is_command
+        self.command = command
+
+
+class ContinuousAudioStream:
+    """Manages a continuous audio stream with error recovery."""
+
+    def __init__(self, config: ConfigManager, recognizer: VoiceRecognizer):
+        self.config = config
+        self.recognizer = recognizer
+        self.audio: Optional[pyaudio.PyAudio] = None
+        self.stream: Optional[pyaudio.Stream] = None
+        self._lock = threading.RLock()
+        self._running = False
+        self._retry_count = 0
+        self._max_retries = 3
+        self._retry_delays = [1.0, 2.0, 4.0]
+
+    def _get_device_index(self) -> Optional[int]:
+        """Get the audio device index from config."""
+        device = self.config.get_audio_device()
+        if not device or device == "default":
+            return None
+
+        if not self.audio:
+            return None
+
+        for i in range(self.audio.get_device_count()):
+            dev_info = self.audio.get_device_info_by_index(i)
+            if dev_info["name"] == device:
+                return i
+        return None
+
+    def start(self) -> bool:
+        """Start the audio stream with retry logic.
+
+        Returns:
+            True if stream started successfully, False otherwise
+        """
+        with self._lock:
+            return self._start_with_retry()
+
+    def _start_with_retry(self) -> bool:
+        """Attempt to start the stream with exponential backoff retries."""
+        import pyaudio
+
+        while self._retry_count < self._max_retries:
+            try:
+                self._cleanup_stream()
+
+                self.audio = pyaudio.PyAudio()
+                device_index = self._get_device_index()
+
+                self.stream = self.audio.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=16000,
+                    input=True,
+                    input_device_index=device_index,
+                    frames_per_buffer=1024,
+                )
+
+                self._running = True
+                self._retry_count = 0
+                print("Audio stream started successfully")
+                return True
+
+            except Exception as e:
+                self._retry_count += 1
+                print(f"Error starting audio stream (attempt {self._retry_count}): {e}")
+                self._cleanup_stream()
+
+                if self._retry_count < self._max_retries:
+                    delay = self._retry_delays[self._retry_count - 1]
+                    print(f"Retrying in {delay} seconds...")
+                    time.sleep(delay)
+
+        print("Max retries exceeded for audio stream startup")
+        return False
+
+    def read(self, num_frames: int = 1024) -> Optional[bytes]:
+        """Read audio data from the stream.
+
+        Args:
+            num_frames: Number of frames to read
+
+        Returns:
+            Audio data bytes or None if error occurred
+        """
+        with self._lock:
+            if not self.stream or not self._running:
+                return None
+
+            try:
+                return self.stream.read(num_frames, exception_on_overflow=False)
+            except Exception as e:
+                print(f"Error reading from audio stream: {e}")
+                return None
+
+    def is_active(self) -> bool:
+        """Check if the stream is active."""
+        with self._lock:
+            return (
+                self._running
+                and self.stream is not None
+                and self.stream.is_active()
+            )
+
+    def restart(self) -> bool:
+        """Restart the audio stream.
+
+        Returns:
+            True if restart was successful, False otherwise
+        """
+        with self._lock:
+            self._retry_count = 0
+            return self._start_with_retry()
+
+    def stop(self):
+        """Stop the audio stream and cleanup resources."""
+        with self._lock:
+            self._running = False
+            self._cleanup_stream()
+
+    def _cleanup_stream(self):
+        """Clean up audio resources."""
+        if self.stream:
+            try:
+                if self.stream.is_active():
+                    self.stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None
+
+        if self.audio:
+            try:
+                self.audio.terminate()
+            except Exception:
+                pass
+            self.audio = None
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+        return False
+
+
+def process_recognition_results(
+    recognizer: VoiceRecognizer, data: bytes
+) -> list[AudioResult]:
+    """Process audio data and return structured recognition results.
+
+    Args:
+        recognizer: The VoiceRecognizer instance
+        data: Raw audio data bytes
+
+    Returns:
+        List of AudioResult objects
+    """
+    results = []
+
+    if len(recognizer.recognizers) > 1:
+        # Multi-model mode
+        all_results = recognizer.process_audio_multi_all(data)
+        for text, confidence, is_primary, lang in all_results:
+            is_command = recognizer.is_keyword(text)
+            command = recognizer.get_command(text) if is_command else None
+            results.append(
+                AudioResult(
+                    text=text,
+                    confidence=confidence,
+                    is_primary=is_primary,
+                    lang=lang,
+                    is_command=is_command,
+                    command=command,
+                )
+            )
+    else:
+        # Single model mode
+        rec = recognizer.create_recognizer()
+        if rec and rec.AcceptWaveform(data):
+            result = json.loads(rec.Result())
+            text = result.get("text", "")
+            if text:
+                confidence = recognizer._get_confidence_from_result(result)
+                is_command = recognizer.is_keyword(text)
+                command = recognizer.get_command(text) if is_command else None
+                results.append(
+                    AudioResult(
+                        text=text,
+                        confidence=confidence,
+                        is_primary=True,
+                        lang="default",
+                        is_command=is_command,
+                        command=command,
+                    )
+                )
+
+    return results
+
+
+def get_best_result(results: list[AudioResult]) -> Optional[AudioResult]:
+    """Select the best result from a list of results based on confidence.
+
+    Args:
+        results: List of AudioResult objects
+
+    Returns:
+        The best AudioResult or None if list is empty
+    """
+    if not results:
+        return None
+    return max(results, key=lambda x: x.confidence)
+
+
+def log_all_results(results: list[AudioResult]):
+    """Log all recognition results to the terminal.
+
+    Args:
+        results: List of AudioResult objects
+    """
+    if not results:
+        return
+
+    print("\n--- Recognition Results ---")
+    for r in results:
+        conf_pct = f"{r.confidence * 100:.1f}%"
+        primary_marker = " (PRIMARY)" if r.is_primary else ""
+        cmd_marker = f" [CMD: {r.command}]" if r.is_command else ""
+        print(f"  [{r.lang}] \"{r.text}\" - confidence: {conf_pct}{primary_marker}{cmd_marker}")
+    print("--- End Results ---\n")
 
 
 class VoiceTextInsertApp:
+    """Main application class with state machine and continuous listening."""
+
     def __init__(self):
+        """Initialize the VoiceTextInsert application."""
         self.config = ConfigManager("config.yaml")
         self.audio_manager = AudioManager(self.config)
         self.mouse_controller = MouseController()
@@ -56,10 +332,38 @@ class VoiceTextInsertApp:
 
         self.settings = self.config.get_settings()
 
-        self.popup = None
+        # State machine for managing application states
+        self.state_machine = ListeningStateMachine()
+        self._setup_state_machine_callbacks()
+
+        # Thread-safe queue for audio results
+        self.audio_queue: queue.Queue = queue.Queue()
+
+        # UI components
+        self.popup: Optional[PopupWindow] = None
         self.current_text = ""
-        self.listening = False
-        self.listening_thread = None
+
+        # Threading components
+        self.listening_thread: Optional[threading.Thread] = None
+        self.listening_shutdown = threading.Event()
+        self.audio_stream: Optional[ContinuousAudioStream] = None
+
+        # Recording state
+        self.recording = False
+        self.recording_thread: Optional[threading.Thread] = None
+
+        # Result batching: collect results from multiple models within time window
+        self._result_buffer: list[tuple[AudioResult, float]] = []  # (result, timestamp)
+        self._result_buffer_lock = threading.Lock()
+        self._result_batch_window = 0.15  # 150ms window to collect results
+        self._result_timer: Optional[threading.Timer] = None
+        self._processed_recent: list[tuple[str, float]] = []  # (text, timestamp) for dedup
+        self._dedup_window = 2.0  # 2 seconds to ignore duplicates
+
+        # Deduplication: track recently processed texts
+        self._recent_texts: list[str] = []
+        self._max_recent_texts = 10
+        self._dedup_lock = threading.Lock()
 
         self._setup_tray()
         self._play_startup_sound()
@@ -68,6 +372,370 @@ class VoiceTextInsertApp:
         self.recognizer.create_recognizers()
         print("Voice Text Insert avviato. Di 'computer scrivi' per iniziare.")
         self._start_background_listening()
+
+    def _setup_state_machine_callbacks(self):
+        """Set up callbacks for state machine transitions."""
+        # Entry callback for SHOWING_STATE
+        self.state_machine.on_state_entry(
+            ListeningState.SHOWING_STATE,
+            self._on_showing_state_entry,
+        )
+
+        # Exit callback for SHOWING_STATE
+        self.state_machine.on_state_exit(
+            ListeningState.SHOWING_STATE,
+            self._on_showing_state_exit,
+        )
+
+        # Transition callback for LISTENING_ONLY_STATE -> SHOWING_STATE
+        self.state_machine.on_transition(
+            ListeningState.LISTENING_ONLY_STATE,
+            ListeningState.SHOWING_STATE,
+            self._on_transition_to_showing,
+        )
+
+        # Transition callback for SHOWING_STATE -> LISTENING_ONLY_STATE
+        self.state_machine.on_transition(
+            ListeningState.SHOWING_STATE,
+            ListeningState.LISTENING_ONLY_STATE,
+            self._on_transition_to_listening,
+        )
+
+        # Entry callback for ERROR_STATE
+        self.state_machine.on_state_entry(
+            ListeningState.ERROR_STATE,
+            self._on_error_state_entry,
+        )
+
+    def _on_showing_state_entry(
+        self,
+        from_state: ListeningState,
+        to_state: ListeningState,
+        context: Optional[dict],
+    ):
+        """Handle entry into SHOWING_STATE."""
+        print("Entering SHOWING_STATE - popup is active")
+
+    def _on_showing_state_exit(
+        self,
+        from_state: ListeningState,
+        to_state: ListeningState,
+        context: Optional[dict],
+    ):
+        """Handle exit from SHOWING_STATE."""
+        print("Exiting SHOWING_STATE")
+        # Close popup if still open
+        if self.popup and not self.popup.is_closed():
+            GLib.idle_add(self._safe_close_popup)
+
+    def _on_transition_to_showing(
+        self,
+        from_state: ListeningState,
+        to_state: ListeningState,
+        context: Optional[dict],
+    ):
+        """Handle transition to SHOWING_STATE."""
+        print("Transition: LISTENING_ONLY_STATE -> SHOWING_STATE")
+
+    def _on_transition_to_listening(
+        self,
+        from_state: ListeningState,
+        to_state: ListeningState,
+        context: Optional[dict],
+    ):
+        """Handle transition to LISTENING_ONLY_STATE."""
+        print("Transition: SHOWING_STATE -> LISTENING_ONLY_STATE")
+
+    def _on_error_state_entry(
+        self,
+        from_state: ListeningState,
+        to_state: ListeningState,
+        context: Optional[dict],
+    ):
+        """Handle entry into ERROR_STATE."""
+        print("Entering ERROR_STATE - attempting recovery...")
+        # Try to recover after a delay
+        threading.Timer(2.0, self._attempt_recovery).start()
+
+    def _attempt_recovery(self):
+        """Attempt to recover from error state."""
+        print("Attempting recovery from ERROR_STATE...")
+        if self.audio_stream:
+            if self.audio_stream.restart():
+                self.state_machine.transition_to(ListeningState.LISTENING_ONLY_STATE)
+            else:
+                print("Failed to restart audio stream")
+        else:
+            self.state_machine.transition_to(ListeningState.LISTENING_ONLY_STATE)
+
+    def _safe_close_popup(self):
+        """Safely close the popup window from any thread."""
+        try:
+            if self.popup and not self.popup.is_closed():
+                self.popup.close()
+        except Exception as e:
+            print(f"Error closing popup: {e}")
+        finally:
+            self.popup = None
+        return False  # Don't call again
+
+    def _process_audio_queue(self):
+        """Process audio results from the queue (called from main thread via GLib)."""
+        try:
+            while not self.audio_queue.empty():
+                results = self.audio_queue.get_nowait()
+                self._handle_audio_results(results)
+        except queue.Empty:
+            pass
+        return True  # Continue calling
+
+    def _is_duplicate(self, text: str) -> bool:
+        """Check if text was recently processed (deduplication).
+
+        Args:
+            text: The text to check
+
+        Returns:
+            True if text is a duplicate, False otherwise
+        """
+        with self._dedup_lock:
+            # Normalize text for comparison
+            normalized = text.lower().strip()
+            if not normalized:
+                return False
+
+            current_time = time.time()
+
+            # Clean old entries from dedup window
+            self._processed_recent = [
+                (t, ts) for t, ts in self._processed_recent
+                if current_time - ts < self._dedup_window
+            ]
+
+            # Check if text was processed recently
+            for recent_text, _ in self._processed_recent:
+                if recent_text.lower().strip() == normalized:
+                    return True
+
+            return False
+
+    def _add_to_processed(self, text: str):
+        """Add text to recently processed list.
+
+        Args:
+            text: The text that was processed
+        """
+        with self._dedup_lock:
+            self._processed_recent.append((text, time.time()))
+
+    def _process_result_batch(self):
+        """Process buffered results after time window expires.
+
+        Selects the result with highest confidence from all models
+        and displays only that one.
+        """
+        with self._result_buffer_lock:
+            if not self._result_buffer:
+                return
+
+            # Get all results from buffer
+            buffered_results = [r for r, _ in self._result_buffer]
+            self._result_buffer = []
+            self._result_timer = None
+
+        if not buffered_results:
+            return
+
+        # Select the result with highest confidence
+        best_result = max(buffered_results, key=lambda x: x.confidence)
+
+        # Check for duplicates
+        if self._is_duplicate(best_result.text):
+            return
+
+        # Add to processed list
+        self._add_to_processed(best_result.text)
+
+        # Log all results with best highlighted
+        print("\n--- Recognition Results ---")
+        for r in buffered_results:
+            conf_pct = f"{r.confidence * 100:.1f}%"
+            primary_marker = " (PRIMARY)" if r.is_primary else ""
+            best_marker = " <-- SELECTED" if r == best_result else ""
+            print(f"  [{r.lang}] \"{r.text}\" - confidence: {conf_pct}{primary_marker}{best_marker}")
+        print("--- End Results ---\n")
+
+        # Handle based on current state
+        current_state = self.state_machine.current_state
+
+        if current_state == ListeningState.LISTENING_ONLY_STATE:
+            # Check if best result is a command
+            if best_result.is_command:
+                print(f"Command detected: {best_result.command}")
+                self._handle_command(best_result.command)
+
+        elif current_state == ListeningState.SHOWING_STATE:
+            # Display the best result in popup
+            if self.popup and not self.popup.is_closed():
+                replaced_text = self.recognizer.apply_dictionary(best_result.text)
+                GLib.idle_add(
+                    self._safe_append_text_with_confidence,
+                    replaced_text,
+                    best_result.confidence,
+                )
+
+    def _handle_audio_results(self, results: list[AudioResult]):
+        """Handle audio recognition results based on current state.
+
+        Collects results from multiple models in a time window and
+        selects the one with highest confidence.
+
+        Args:
+            results: List of AudioResult objects
+        """
+        if not results:
+            return
+
+        current_time = time.time()
+
+        with self._result_buffer_lock:
+            # Add new results to buffer
+            for result in results:
+                self._result_buffer.append((result, current_time))
+
+            # Cancel existing timer if any
+            if self._result_timer is not None:
+                self._result_timer.cancel()
+
+            # Start new timer to process batch after window expires
+            self._result_timer = threading.Timer(
+                self._result_batch_window,
+                self._process_result_batch
+            )
+            self._result_timer.daemon = True
+            self._result_timer.start()
+
+    def _handle_command(self, command: str):
+        """Handle voice commands based on current state.
+
+        Args:
+            command: The detected command string
+        """
+        current_state = self.state_machine.current_state
+
+        if current_state == ListeningState.LISTENING_ONLY_STATE:
+            if command == "scrivi":
+                # Transition to showing state and open popup
+                success = self.state_machine.transition_to(ListeningState.SHOWING_STATE)
+                if success:
+                    GLib.idle_add(self._open_popup_for_recording)
+            elif command == "inserisci":
+                # Should not happen in listening mode, but handle gracefully
+                print("'inserisci' command received in LISTENING_ONLY_STATE, ignoring")
+            elif command == "correggi":
+                # Should not happen in listening mode
+                print("'correggi' command received in LISTENING_ONLY_STATE, ignoring")
+            elif command == "cancella":
+                # Delete last word action
+                GLib.idle_add(self._delete_last_word)
+
+        elif current_state == ListeningState.SHOWING_STATE:
+            if command == "inserisci":
+                # Insert text and return to listening mode
+                self.recording = False
+                GLib.idle_add(self._insert_text)
+            elif command == "correggi":
+                # Correct and insert text
+                self.recording = False
+                GLib.idle_add(self._correct_and_insert)
+            elif command == "cancella":
+                # Delete last word
+                GLib.idle_add(self._delete_last_word)
+
+    def _safe_append_text_with_confidence(self, text: str, confidence: float):
+        """Safely append text with confidence to the popup."""
+        try:
+            if self.popup and not self.popup.is_closed():
+                self.popup.append_text_with_confidence(text, confidence)
+                self.current_text += " " + text if self.current_text else text
+        except Exception as e:
+            print(f"Error appending text: {e}")
+        return False
+
+    def _open_popup_for_recording(self):
+        """Open the popup window for recording."""
+        try:
+            self._play_beep()
+            self.popup = PopupWindow()
+            self.popup.set_cancel_callback(self._on_cancel)
+            self.popup.show_recording()
+            self.popup.show_all()
+            self.current_text = ""
+            self.recording = True
+        except Exception as e:
+            print(f"Error opening popup: {e}")
+            # Transition back to listening mode on failure
+            self.state_machine.transition_to(ListeningState.LISTENING_ONLY_STATE)
+        return False
+
+    def _start_background_listening(self):
+        """Start the continuous background listening thread."""
+        self.listening_shutdown.clear()
+
+        def listen_loop():
+            """Main listening loop that runs continuously."""
+            self.audio_stream = ContinuousAudioStream(self.config, self.recognizer)
+
+            if not self.audio_stream.start():
+                print("Failed to start audio stream, entering ERROR state")
+                self.state_machine.transition_to(ListeningState.ERROR_STATE)
+                return
+
+            # Create recognizers for processing
+            self.recognizer.create_recognizers()
+
+            consecutive_errors = 0
+            max_consecutive_errors = 5
+
+            while not self.listening_shutdown.is_set():
+                try:
+                    # Read audio data
+                    data = self.audio_stream.read(1024)
+
+                    if data is None:
+                        consecutive_errors += 1
+                        if consecutive_errors >= max_consecutive_errors:
+                            print("Too many consecutive errors, restarting audio stream")
+                            if not self.audio_stream.restart():
+                                print("Failed to restart audio stream")
+                                self.state_machine.transition_to(
+                                    ListeningState.ERROR_STATE
+                                )
+                                break
+                            consecutive_errors = 0
+                        continue
+
+                    consecutive_errors = 0
+
+                    # Process audio data
+                    results = process_recognition_results(self.recognizer, data)
+
+                    if results:
+                        # Queue results for main thread processing
+                        self.audio_queue.put(results)
+                        GLib.idle_add(self._process_audio_queue)
+
+                except Exception as e:
+                    print(f"Error in listening loop: {e}")
+                    consecutive_errors += 1
+                    time.sleep(0.1)
+
+            # Cleanup
+            print("Background listening loop ending")
+            self.audio_stream.stop()
+
+        self.listening_thread = threading.Thread(target=listen_loop, daemon=True)
+        self.listening_thread.start()
 
     def _play_startup_sound(self):
         try:
@@ -147,6 +815,7 @@ class VoiceTextInsertApp:
         self.tray.get_menu().popup(None, None, None, None, event.button, event.time)
 
     def _show_settings(self):
+        """Show the settings window."""
         devices = self.audio_manager.list_devices()
         current = self.config.get_audio_device()
 
@@ -157,382 +826,51 @@ class VoiceTextInsertApp:
         settings = SettingsWindow(devices, current, on_select)
         settings.show_all()
 
-    def _start_background_listening(self):
-        def listen_loop():
-            device = self.config.get_audio_device()
-            self.recognizer.audio = None
-            self.recognizer.stream = None
-
-            try:
-                import pyaudio
-                import json
-
-                self.recognizer.audio = pyaudio.PyAudio()
-
-                device_index = None
-                if device and device != "default":
-                    for i in range(self.recognizer.audio.get_device_count()):
-                        dev_info = self.recognizer.audio.get_device_info_by_index(i)
-                        if dev_info["name"] == device:
-                            device_index = i
-                            break
-
-                self.recognizer.stream = self.recognizer.audio.open(
-                    format=pyaudio.paInt16,
-                    channels=1,
-                    rate=16000,
-                    input=True,
-                    input_device_index=device_index,
-                    frames_per_buffer=1024,
-                )
-
-                recognizer = self.recognizer.create_recognizer()
-
-                while self.listening or not self.listening:
-                    if not self.recognizer.stream:
-                        break
-                    if not self.recognizer.stream.is_active():
-                        break
-                    try:
-                        data = self.recognizer.stream.read(
-                            1024, exception_on_overflow=False
-                        )
-                    except Exception as e:
-                        print(f"Errore lettura background: {e}")
-                        break
-                    text = ""
-                    confidence = 0.0
-                    if len(self.recognizer.recognizers) > 1:
-                        result = self.recognizer.process_audio_multi(data)
-                        text = result[0] if result else ""
-                    else:
-                        if recognizer and recognizer.AcceptWaveform(data):
-                            result = recognizer.Result()
-                            result_dict = json.loads(result)
-                            text = result_dict.get("text", "")
-                            confidence = 0.0
-                    if text:
-                        print(f"Ricevuto: {text}")
-                        if self.recognizer.is_keyword(text):
-                            command = self.recognizer.get_command(text)
-                            print(f"Comando rilevato: {command}")
-                            if command == "scrivi":
-                                recognizer = self.recognizer.create_recognizer()
-                                self._start_recording()
-                            elif command == "inserisci":
-                                recognizer = self.recognizer.create_recognizer()
-                                self.listening = False
-                                try:
-                                    if self.recognizer.stream:
-                                        if self.recognizer.stream.is_active():
-                                            self.recognizer.stream.stop_stream()
-                                        self.recognizer.stream.close()
-                                except:
-                                    pass
-                                try:
-                                    if self.recognizer.audio:
-                                        self.recognizer.audio.terminate()
-                                except:
-                                    pass
-                                self.recognizer.stream = None
-                                self.recognizer.audio = None
-                                time.sleep(0.5)
-                                self._insert_text()
-                                break
-                            elif command == "correggi":
-                                recognizer = self.recognizer.create_recognizer()
-                                self.listening = False
-                                try:
-                                    if self.recognizer.stream:
-                                        if self.recognizer.stream.is_active():
-                                            self.recognizer.stream.stop_stream()
-                                        self.recognizer.stream.close()
-                                except:
-                                    pass
-                                try:
-                                    if self.recognizer.audio:
-                                        self.recognizer.audio.terminate()
-                                except:
-                                    pass
-                                self.recognizer.stream = None
-                                self.recognizer.audio = None
-                                time.sleep(0.5)
-                                self._correct_and_insert()
-                                break
-                            elif command == "cancella":
-                                GLib.idle_add(self._delete_last_word)
-                                recognizer = self.recognizer.create_recognizer()
-            except Exception as e:
-                print(f"Errore nel loop di ascolto: {e}")
-                try:
-                    if self.recognizer.stream:
-                        self.recognizer.stream.close()
-                except:
-                    pass
-                try:
-                    if self.recognizer.audio:
-                        self.recognizer.audio.terminate()
-                except:
-                    pass
-                time.sleep(1.5)
-                if not self.listening:
-                    self._start_background_listening()
-
-        self.listening = False
-        self.listening_thread = threading.Thread(target=listen_loop, daemon=True)
-        self.listening_thread.start()
-
-    def _safe_append_text(self, text):
-        try:
-            if self.popup and not self.popup.is_closed():
-                self.popup.append_text(text)
-        except Exception as e:
-            print(f"ERRORE _safe_append_text: {e}")
-        return False
-
     def _delete_last_word(self):
+        """Delete the last word from the popup text."""
         try:
             if self.popup and not self.popup.is_closed():
                 self.popup.delete_last_word()
                 text = self.popup.get_text()
                 self.current_text = text
         except Exception as e:
-            print(f"ERRORE _delete_last_word: {e}")
+            print(f"Error deleting last word: {e}")
         return False
 
-    def _close_popup_and_restart(self):
-        try:
-            if self.popup and not self.popup.is_closed():
-                self.popup.close()
-                self.popup = None
-        except Exception as e:
-            print(f"ERRORE _close_popup_and_restart: {e}")
-        self._restart_background()
-        return False
+    def _on_cancel(self, action: str):
+        """Handle cancel or copy actions from the popup.
 
-    def _show_ready_status(self):
-        try:
-            if self.popup and not self.popup.is_closed():
-                self.popup.set_status("Pronto. Dì 'inserisci' o 'correggi'")
-        except Exception as e:
-            print(f"ERRORE _show_ready_status: {e}")
-        return False
+        Args:
+            action: The action type ("cancel" or "copy")
+        """
+        self.recording = False
+        if self.popup and not self.popup.is_closed():
+            if action == "copy":
+                self.current_text = self.popup.get_text()
+            self.popup.close()
+            self.popup = None
 
-    def _start_recording(self):
-        self._play_beep()
-        self.listening = False
-        try:
-            if self.recognizer.stream:
-                if self.recognizer.stream.is_active():
-                    self.recognizer.stream.stop_stream()
-                self.recognizer.stream.close()
-        except:
-            pass
-        try:
-            if self.recognizer.audio:
-                self.recognizer.audio.terminate()
-        except:
-            pass
-        self.recognizer.stream = None
-        self.recognizer.audio = None
-
-        def create_popup():
-            time.sleep(0.3)
-            self.popup = PopupWindow()
-            self.popup.set_cancel_callback(self._on_cancel)
-            self.popup.show_recording()
-            self.popup.show_all()
-            self.current_text = ""
-            self.recording = True
-            self._start_recording_thread()
-            return False
-
-        Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, create_popup)
-
-    def _start_recording_thread(self):
-        def record():
-            stream = None
-            audio = None
-            stream_closed = False
-            try:
-                import pyaudio
-                import json
-
-                device = self.config.get_audio_device()
-                audio = pyaudio.PyAudio()
-
-                device_index = None
-                if device and device != "default":
-                    for i in range(audio.get_device_count()):
-                        dev_info = audio.get_device_info_by_index(i)
-                        if dev_info["name"] == device:
-                            device_index = i
-                            break
-
-                stream = audio.open(
-                    format=pyaudio.paInt16,
-                    channels=1,
-                    rate=16000,
-                    input=True,
-                    input_device_index=device_index,
-                    frames_per_buffer=1024,
-                )
-
-                recognizer = self.recognizer.create_recognizer()
-                timeout = self.settings.get("timeout_seconds", 40)
-                start_time = time.time()
-
-                while self.recording and (time.time() - start_time) < timeout:
-                    if not stream.is_active() or stream_closed:
-                        break
-                    try:
-                        data = stream.read(1024, exception_on_overflow=False)
-                    except OSError:
-                        print("Timeout lettura audio, interrompo")
-                        break
-                    except Exception as e:
-                        print(f"Errore lettura audio: {e}")
-                        break
-                    text = ""
-                    confidence = 0.0
-                    if len(self.recognizer.recognizers) > 1:
-                        result = self.recognizer.process_audio_multi(data)
-                        text = result[0] if result else ""
-                    else:
-                        if recognizer and recognizer.AcceptWaveform(data):
-                            result = json.loads(recognizer.Result())
-                            text = result.get("text", "")
-                    if text:
-                        if self.recognizer.is_keyword(text):
-                            command = self.recognizer.get_command(text)
-                            if command == "inserisci":
-                                self.recording = False
-                                stream_closed = True
-                                try:
-                                    if stream.is_active():
-                                        stream.stop_stream()
-                                except:
-                                    pass
-                                try:
-                                    stream.close()
-                                except:
-                                    pass
-                                try:
-                                    audio.terminate()
-                                except:
-                                    pass
-                                Gdk.threads_add_idle(
-                                    GLib.PRIORITY_DEFAULT, self._insert_text
-                                )
-                                return
-                            elif command == "correggi":
-                                self.recording = False
-                                stream_closed = True
-                                try:
-                                    if stream.is_active():
-                                        stream.stop_stream()
-                                except:
-                                    pass
-                                try:
-                                    stream.close()
-                                except:
-                                    pass
-                                try:
-                                    audio.terminate()
-                                except:
-                                    pass
-                                Gdk.threads_add_idle(
-                                    GLib.PRIORITY_DEFAULT, self._correct_and_insert
-                                )
-                                return
-                            elif command == "cancella":
-                                GLib.idle_add(self._delete_last_word)
-                                recognizer = self.recognizer.create_recognizer()
-                        else:
-                            if self.popup and not self.popup.is_closed():
-                                try:
-                                    replaced_text = self.recognizer.apply_dictionary(
-                                        text
-                                    )
-                                    self.current_text += " " + replaced_text
-                                    GLib.idle_add(
-                                        self._safe_append_text,
-                                        replaced_text,
-                                    )
-                                except Exception as e:
-                                    print(f"ERRORE append text: {e}")
-
-                print("DEBUG: Recording loop ended for the timout set in config.yaml")
-                self.recording = False
-                if self.current_text.strip():
-                    print("DEBUG: calling _show_ready_status")
-                    GLib.idle_add(self._show_ready_status)
-                else:
-                    print("DEBUG: no text, closing popup and restarting")
-                    GLib.idle_add(self._close_popup_and_restart)
-
-            except Exception as e:
-                print(f"Errore registrazione: {e}")
-            finally:
-                try:
-                    if stream and not stream_closed:
-                        stream_closed = True
-                        try:
-                            if stream.is_active():
-                                stream.stop_stream()
-                        except:
-                            pass
-                        try:
-                            stream.close()
-                        except:
-                            pass
-                    if audio:
-                        try:
-                            audio.terminate()
-                        except:
-                            pass
-                except:
-                    pass
-
-        self.recording_thread = threading.Thread(target=record, daemon=True)
-        self.recording_thread.start()
-
-    def _on_cancel(self, action):
-        if action == "cancel":
-            self.recording = False
-            if self.popup:
-                self.popup.close()
-                self.popup = None
-            self._restart_background()
-        elif action == "copy":
-            self.recording = False
-            if self.popup:
-                text = self.popup.get_text()
-                self.current_text = text
-                self.popup.close()
-                self.popup = None
-            self._restart_background()
+        # Transition back to LISTENING_ONLY_STATE
+        self.state_machine.transition_to(ListeningState.LISTENING_ONLY_STATE)
 
     def _insert_text(self):
+        """Insert the recorded text into the active application."""
         self.recording = False
-        if self.popup:
+        if self.popup and not self.popup.is_closed():
             self.popup.show_processing()
-            text = self.popup.get_text()
-            self.current_text = text
+            self.current_text = self.popup.get_text()
 
         def do_insert():
             time.sleep(0.2)
             self.mouse_controller.click_and_type(self.current_text)
-            if self.popup:
-                Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, self.popup.close)
-                self.popup = None
-            self._restart_background()
+            GLib.idle_add(self._cleanup_after_action)
 
         threading.Thread(target=do_insert, daemon=True).start()
 
     def _correct_and_insert(self):
+        """Correct the recorded text using LLM and insert it."""
         self.recording = False
-        if self.popup:
+        if self.popup and not self.popup.is_closed():
             self.popup.show_processing()
 
         def do_correct():
@@ -541,31 +879,40 @@ class VoiceTextInsertApp:
             )
             time.sleep(0.2)
             self.mouse_controller.click_and_type(corrected)
-            if self.popup:
-                Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, self.popup.close)
-                self.popup = None
-            self._restart_background()
+            GLib.idle_add(self._cleanup_after_action)
 
         threading.Thread(target=do_correct, daemon=True).start()
 
-    def _restart_background(self):
-        time.sleep(1.5)
-        self._start_background_listening()
+    def _cleanup_after_action(self):
+        """Clean up after insert/correct actions and return to listening state."""
+        try:
+            if self.popup and not self.popup.is_closed():
+                self.popup.close()
+            self.popup = None
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+
+        # Transition back to LISTENING_ONLY_STATE
+        self.state_machine.transition_to(ListeningState.LISTENING_ONLY_STATE)
+        return False
 
     def _quit(self):
+        """Quit the application and cleanup resources."""
+        print("Quitting application...")
         self.recording = False
-        self.listening = False
-        if self.recognizer.stream:
+        self.listening_shutdown.set()
+
+        # Stop audio stream
+        if self.audio_stream:
             try:
-                self.recognizer.stream.stop_stream()
-                self.recognizer.stream.close()
-            except Exception:
-                pass
-        if self.recognizer.audio:
-            try:
-                self.recognizer.audio.terminate()
-            except Exception:
-                pass
+                self.audio_stream.stop()
+            except Exception as e:
+                print(f"Error stopping audio stream: {e}")
+
+        # Wait for listening thread to finish
+        if self.listening_thread and self.listening_thread.is_alive():
+            self.listening_thread.join(timeout=2.0)
+
         Gtk.main_quit()
 
 
