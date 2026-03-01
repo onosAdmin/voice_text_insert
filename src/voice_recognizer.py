@@ -104,13 +104,14 @@ class VoiceRecognizer:
                 text = result.get("text", "")
                 if text:
                     confidence = self._get_confidence_from_result(result)
+                    conf_str = f"{confidence:.3f}" if confidence > 0 else "N/A"
                     lang = (
                         list(self.models_config.keys())[i]
                         if i < len(self.models_config)
                         else f"model_{i}"
                     )
                     print(
-                        f'[{lang}] text="{text}" confidence={confidence:.3f} primary={is_primary}'
+                        f'[{lang}] text="{text}" confidence={conf_str} primary={is_primary}'
                     )
                     results.append((text, confidence, is_primary))
 
