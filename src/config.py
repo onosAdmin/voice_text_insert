@@ -99,3 +99,9 @@ class ConfigManager:
             }
         }
         return self.get("vosk_models", default_models)
+
+    def get_multi_model_mode(self) -> str:
+        return self.get("settings.multi_model_mode", "best_confidence")
+
+    def get_confidence_threshold(self) -> float:
+        return self.get("settings.confidence_threshold", 0.7)
