@@ -27,6 +27,8 @@ class ConfigManager:
                 "popup_position": "top-right",
                 "language": "it",
                 "vosk_model_path": "model",
+                "multi_model_mode": "best_confidence",
+                "confidence_threshold": 0.7,
             },
         }
 
@@ -104,4 +106,5 @@ class ConfigManager:
         return self.get("settings.multi_model_mode", "best_confidence")
 
     def get_confidence_threshold(self) -> float:
-        return self.get("settings.confidence_threshold", 0.7)
+        value = self.get("settings.confidence_threshold", 0.7)
+        return float(value) if value is not None else 0.7
