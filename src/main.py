@@ -228,6 +228,10 @@ def process_recognition_results(
         List of AudioResult objects
     """
     results = []
+    # DEBUG: Print keywords being used (only once at start)
+    if not hasattr(process_recognition_results, '_keywords_printed'):
+        print(f"DEBUG: Using keywords: {list(recognizer.keywords.keys())}")
+        process_recognition_results._keywords_printed = True
 
     if len(recognizer.recognizers) > 1:
         # Multi-model mode
@@ -292,7 +296,7 @@ def log_all_results(results: list[AudioResult]):
     if not results:
         return
 
-    print("\n--- Recognition Results ---")
+    print("\n--- Recognition Results a ---")
     for r in results:
         conf_pct = f"{r.confidence * 100:.1f}%"
         primary_marker = " (PRIMARY)" if r.is_primary else ""
@@ -316,6 +320,7 @@ class VoiceTextInsertApp:
         dictionary = self.config.get_dictionary()
         multi_model_mode = self.config.get_multi_model_mode()
         confidence_threshold = self.config.get_confidence_threshold()
+        self._primary_secondary_threshold = self.config.get_primary_secondary_confidence_threshold_level()
 
         self.recognizer = VoiceRecognizer(
             models_config=vosk_models,
@@ -355,7 +360,7 @@ class VoiceTextInsertApp:
         # Result batching: collect results from multiple models within time window
         self._result_buffer: list[tuple[AudioResult, float]] = []  # (result, timestamp)
         self._result_buffer_lock = threading.Lock()
-        self._result_batch_window = 0.15  # 150ms window to collect results
+        self._result_batch_window = 0.35  # 150ms window to collect results
         self._result_timer: Optional[threading.Timer] = None
         self._processed_recent: list[tuple[str, float]] = []  # (text, timestamp) for dedup
         self._dedup_window = 2.0  # 2 seconds to ignore duplicates
@@ -364,6 +369,7 @@ class VoiceTextInsertApp:
         self._recent_texts: list[str] = []
         self._max_recent_texts = 10
         self._dedup_lock = threading.Lock()
+
 
         self._setup_tray()
         self._play_startup_sound()
@@ -549,6 +555,19 @@ class VoiceTextInsertApp:
         # Select the result with highest confidence
         best_result = max(buffered_results, key=lambda x: x.confidence)
 
+        # Find primary model result
+        primary_result = None
+        for result in buffered_results:
+            if result.is_primary:
+                primary_result = result
+                break
+
+        # If primary model confidence is within threshold of best, prefer primary
+        if primary_result is not None:
+            confidence_diff = best_result.confidence - primary_result.confidence
+            if confidence_diff < self._primary_secondary_threshold:
+                best_result = primary_result
+
         # Check for duplicates
         if self._is_duplicate(best_result.text):
             return
@@ -557,16 +576,18 @@ class VoiceTextInsertApp:
         self._add_to_processed(best_result.text)
 
         # Log all results with best highlighted
-        print("\n--- Recognition Results ---")
+        print("\n--- Recognition Results c ---")
         for r in buffered_results:
             conf_pct = f"{r.confidence * 100:.1f}%"
             primary_marker = " (PRIMARY)" if r.is_primary else ""
             best_marker = " <-- SELECTED" if r == best_result else ""
-            print(f"  [{r.lang}] \"{r.text}\" - confidence: {conf_pct}{primary_marker}{best_marker}")
+            cmd_marker = f" [CMD: {r.command}]" if r.is_command else ""
+            print(f"  [{r.lang}] \"{r.text}\" - confidence: {conf_pct}{primary_marker}{best_marker}{cmd_marker}")
         print("--- End Results ---\n")
 
         # Handle based on current state
         current_state = self.state_machine.current_state
+        print(f"DEBUG: Processing result in state={current_state.name}, is_command={best_result.is_command}, command={best_result.command}")
 
         if current_state == ListeningState.LISTENING_ONLY_STATE:
             # Check if best result is a command
@@ -575,8 +596,12 @@ class VoiceTextInsertApp:
                 self._handle_command(best_result.command)
 
         elif current_state == ListeningState.SHOWING_STATE:
-            # Display the best result in popup
-            if self.popup and not self.popup.is_closed():
+            # Check if best result is a command first
+            if best_result.is_command:
+                print(f"Command detected in SHOWING_STATE: {best_result.command}")
+                self._handle_command(best_result.command)
+            elif self.popup and not self.popup.is_closed():
+                # Display the best result in popup (only if not a command)
                 replaced_text = self.recognizer.apply_dictionary(best_result.text)
                 GLib.idle_add(
                     self._safe_append_text_with_confidence,
@@ -622,6 +647,7 @@ class VoiceTextInsertApp:
             command: The detected command string
         """
         current_state = self.state_machine.current_state
+        print(f"DEBUG: _handle_command called with command='{command}', current_state={current_state.name}, popup={self.popup}")
 
         if current_state == ListeningState.LISTENING_ONLY_STATE:
             if command == "scrivi":
@@ -640,7 +666,9 @@ class VoiceTextInsertApp:
                 GLib.idle_add(self._delete_last_word)
 
         elif current_state == ListeningState.SHOWING_STATE:
+            print(f"DEBUG: In SHOWING_STATE handling command='{command}'")
             if command == "inserisci":
+                print("DEBUG: Executing 'inserisci' command")
                 # Insert text and return to listening mode
                 self.recording = False
                 GLib.idle_add(self._insert_text)

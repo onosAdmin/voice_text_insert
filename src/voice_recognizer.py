@@ -13,6 +13,10 @@ class VoiceRecognizer:
         "computer inserisci": "inserisci",
         "pc correggi": "correggi",
         "computer cancella": "cancella",
+        "alexa scrivi": "scrivi",
+        "alexa inserisci": "inserisci",
+        "alexa correggi": "correggi",
+        "alexa cancella": "cancella",
     }
 
     def __init__(
@@ -121,6 +125,8 @@ class VoiceRecognizer:
         all_results = self.process_audio_multi_all(data)
         if not all_results:
             return "", 0.0, False
+        #else:
+        print("All results len:", len(all_results))
 
         if self.multi_model_mode == "best_confidence":
             best = max(all_results, key=lambda x: x[1])
@@ -210,7 +216,7 @@ class VoiceRecognizer:
             print("No recognition results")
             return
 
-        print("\n--- Recognition Results ---")
+        print("\n--- Recognition Results b ---")
         for text, confidence, is_primary, lang in results:
             conf_pct = f"{confidence * 100:.1f}%"
             primary_marker = " (PRIMARY)" if is_primary else ""

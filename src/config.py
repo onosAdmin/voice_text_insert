@@ -108,3 +108,15 @@ class ConfigManager:
     def get_confidence_threshold(self) -> float:
         value = self.get("settings.confidence_threshold", 0.7)
         return float(value) if value is not None else 0.7
+
+    def get_primary_secondary_confidence_threshold_level(self) -> float:
+        """Get the threshold for preferring primary model when confidence is close.
+
+        If the difference between best confidence and primary confidence is less
+        than this threshold, the primary model result is selected.
+
+        Returns:
+            Threshold value (default: 0.15 = 15%)
+        """
+        value = self.get("settings.primary_secondary_confidence_threshold_level", 0.15)
+        return float(value) if value is not None else 0.15

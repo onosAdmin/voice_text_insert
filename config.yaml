@@ -23,6 +23,7 @@ settings:
   language: it
   multi_model_mode: "best_confidence"
   confidence_threshold: 0.7
+  primary_secondary_confidence_threshold_level: 0.15
   popup_position: top-right
   timeout_seconds: 6000
   vosk_model_path: /home/marco/voice_text_insert/model/vosk-model-small-it-0.22
