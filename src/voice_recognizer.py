@@ -53,10 +53,11 @@ class VoiceRecognizer:
         return self.recognizers
 
     def create_recognizer(self):
+        for recognizer, is_primary in self.recognizers:
+            if is_primary:
+                return recognizer
         if self.recognizers:
             return self.recognizers[0][0]
-        if self.models:
-            return KaldiRecognizer(self.models[0][0], self.sample_rate)
         return None
 
     def is_keyword(self, text: str) -> bool:
