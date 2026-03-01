@@ -35,11 +35,11 @@ class VoiceTextInsertApp:
         self.mouse_controller = MouseController()
 
         settings = self.config.get_settings()
-        model_path = settings.get("vosk_model_path", "model")
+        vosk_models = self.config.get_vosk_models()
         keywords = self.config.get_keywords()
         dictionary = self.config.get_dictionary()
         self.recognizer = VoiceRecognizer(
-            model_path=model_path, keywords=keywords, dictionary=dictionary
+            models_config=vosk_models, keywords=keywords, dictionary=dictionary
         )
 
         llm_config = self.config.get_llm_config()
@@ -57,7 +57,7 @@ class VoiceTextInsertApp:
         self._setup_tray()
         self._play_startup_sound()
 
-        self.recognizer.load_model()
+        self.recognizer.load_models()
         print("Voice Text Insert avviato. Di 'computer scrivi' per iniziare.")
         self._start_background_listening()
 
@@ -178,7 +178,8 @@ class VoiceTextInsertApp:
                     frames_per_buffer=1024,
                 )
 
-                recognizer = self.recognizer.create_recognizer()
+                recognizers = self.recognizer.create_recognizers()
+                recognizer = recognizers[0][0] if recognizers else None
 
                 while self.listening or not self.listening:
                     if not self.recognizer.stream:
@@ -203,10 +204,16 @@ class VoiceTextInsertApp:
                                 command = self.recognizer.get_command(text)
                                 print(f"Comando rilevato: {command}")
                                 if command == "scrivi":
-                                    recognizer = self.recognizer.create_recognizer()
+                                    recognizers = self.recognizer.create_recognizers()
+                                    recognizer = (
+                                        recognizers[0][0] if recognizers else None
+                                    )
                                     self._start_recording()
                                 elif command == "inserisci":
-                                    recognizer = self.recognizer.create_recognizer()
+                                    recognizers = self.recognizer.create_recognizers()
+                                    recognizer = (
+                                        recognizers[0][0] if recognizers else None
+                                    )
                                     self.listening = False
                                     try:
                                         if self.recognizer.stream:
@@ -226,7 +233,10 @@ class VoiceTextInsertApp:
                                     self._insert_text()
                                     break
                                 elif command == "correggi":
-                                    recognizer = self.recognizer.create_recognizer()
+                                    recognizers = self.recognizer.create_recognizers()
+                                    recognizer = (
+                                        recognizers[0][0] if recognizers else None
+                                    )
                                     self.listening = False
                                     try:
                                         if self.recognizer.stream:
@@ -247,7 +257,10 @@ class VoiceTextInsertApp:
                                     break
                                 elif command == "cancella":
                                     GLib.idle_add(self._delete_last_word)
-                                    recognizer = self.recognizer.create_recognizer()
+                                    recognizers = self.recognizer.create_recognizers()
+                                    recognizer = (
+                                        recognizers[0][0] if recognizers else None
+                                    )
             except Exception as e:
                 print(f"Errore nel loop di ascolto: {e}")
                 try:
@@ -364,7 +377,8 @@ class VoiceTextInsertApp:
                     frames_per_buffer=1024,
                 )
 
-                recognizer = self.recognizer.create_recognizer()
+                recognizers = self.recognizer.create_recognizers()
+                recognizer = recognizers[0][0] if recognizers else None
                 timeout = self.settings.get("timeout_seconds", 40)
                 start_time = time.time()
 
@@ -427,7 +441,10 @@ class VoiceTextInsertApp:
                                     return
                                 elif command == "cancella":
                                     GLib.idle_add(self._delete_last_word)
-                                    recognizer = self.recognizer.create_recognizer()
+                                    recognizers = self.recognizer.create_recognizers()
+                                    recognizer = (
+                                        recognizers[0][0] if recognizers else None
+                                    )
                             else:
                                 if self.popup and not self.popup.is_closed():
                                     try:
