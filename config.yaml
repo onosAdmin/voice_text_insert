@@ -30,6 +30,6 @@ vosk_models:
     enabled: true
     primary: true
   en:
-    path: /home/marco/voice_text_insert/model/vosk-model-small-en-us
-    enabled: false
+    path: /home/marco/voice_text_insert/model/vosk-model-small-en-us-0.15
+    enabled: true
     primary: false

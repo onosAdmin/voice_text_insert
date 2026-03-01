@@ -211,57 +211,57 @@ class VoiceTextInsertApp:
                             result_dict = json.loads(result)
                             text = result_dict.get("text", "")
                             confidence = 0.0
-                        if text:
-                            print(f"Ricevuto: {text}")
-                            if self.recognizer.is_keyword(text):
-                                command = self.recognizer.get_command(text)
-                                print(f"Comando rilevato: {command}")
-                                if command == "scrivi":
-                                    recognizer = self.recognizer.create_recognizer()
-                                    self._start_recording()
-                                elif command == "inserisci":
-                                    recognizer = self.recognizer.create_recognizer()
-                                    self.listening = False
-                                    try:
-                                        if self.recognizer.stream:
-                                            if self.recognizer.stream.is_active():
-                                                self.recognizer.stream.stop_stream()
-                                            self.recognizer.stream.close()
-                                    except:
-                                        pass
-                                    try:
-                                        if self.recognizer.audio:
-                                            self.recognizer.audio.terminate()
-                                    except:
-                                        pass
-                                    self.recognizer.stream = None
-                                    self.recognizer.audio = None
-                                    time.sleep(0.5)
-                                    self._insert_text()
-                                    break
-                                elif command == "correggi":
-                                    recognizer = self.recognizer.create_recognizer()
-                                    self.listening = False
-                                    try:
-                                        if self.recognizer.stream:
-                                            if self.recognizer.stream.is_active():
-                                                self.recognizer.stream.stop_stream()
-                                            self.recognizer.stream.close()
-                                    except:
-                                        pass
-                                    try:
-                                        if self.recognizer.audio:
-                                            self.recognizer.audio.terminate()
-                                    except:
-                                        pass
-                                    self.recognizer.stream = None
-                                    self.recognizer.audio = None
-                                    time.sleep(0.5)
-                                    self._correct_and_insert()
-                                    break
-                                elif command == "cancella":
-                                    GLib.idle_add(self._delete_last_word)
-                                    recognizer = self.recognizer.create_recognizer()
+                    if text:
+                        print(f"Ricevuto: {text}")
+                        if self.recognizer.is_keyword(text):
+                            command = self.recognizer.get_command(text)
+                            print(f"Comando rilevato: {command}")
+                            if command == "scrivi":
+                                recognizer = self.recognizer.create_recognizer()
+                                self._start_recording()
+                            elif command == "inserisci":
+                                recognizer = self.recognizer.create_recognizer()
+                                self.listening = False
+                                try:
+                                    if self.recognizer.stream:
+                                        if self.recognizer.stream.is_active():
+                                            self.recognizer.stream.stop_stream()
+                                        self.recognizer.stream.close()
+                                except:
+                                    pass
+                                try:
+                                    if self.recognizer.audio:
+                                        self.recognizer.audio.terminate()
+                                except:
+                                    pass
+                                self.recognizer.stream = None
+                                self.recognizer.audio = None
+                                time.sleep(0.5)
+                                self._insert_text()
+                                break
+                            elif command == "correggi":
+                                recognizer = self.recognizer.create_recognizer()
+                                self.listening = False
+                                try:
+                                    if self.recognizer.stream:
+                                        if self.recognizer.stream.is_active():
+                                            self.recognizer.stream.stop_stream()
+                                        self.recognizer.stream.close()
+                                except:
+                                    pass
+                                try:
+                                    if self.recognizer.audio:
+                                        self.recognizer.audio.terminate()
+                                except:
+                                    pass
+                                self.recognizer.stream = None
+                                self.recognizer.audio = None
+                                time.sleep(0.5)
+                                self._correct_and_insert()
+                                break
+                            elif command == "cancella":
+                                GLib.idle_add(self._delete_last_word)
+                                recognizer = self.recognizer.create_recognizer()
             except Exception as e:
                 print(f"Errore nel loop di ascolto: {e}")
                 try:
@@ -394,6 +394,7 @@ class VoiceTextInsertApp:
                         print(f"Errore lettura audio: {e}")
                         break
                     text = ""
+                    confidence = 0.0
                     if len(self.recognizer.recognizers) > 1:
                         text, confidence, is_primary = (
                             self.recognizer.process_audio_multi(data)
@@ -402,65 +403,65 @@ class VoiceTextInsertApp:
                         if recognizer and recognizer.AcceptWaveform(data):
                             result = json.loads(recognizer.Result())
                             text = result.get("text", "")
-                        if text:
-                            if self.recognizer.is_keyword(text):
-                                command = self.recognizer.get_command(text)
-                                if command == "inserisci":
-                                    self.recording = False
-                                    stream_closed = True
-                                    try:
-                                        if stream.is_active():
-                                            stream.stop_stream()
-                                    except:
-                                        pass
-                                    try:
-                                        stream.close()
-                                    except:
-                                        pass
-                                    try:
-                                        audio.terminate()
-                                    except:
-                                        pass
-                                    Gdk.threads_add_idle(
-                                        GLib.PRIORITY_DEFAULT, self._insert_text
+                    if text:
+                        if self.recognizer.is_keyword(text):
+                            command = self.recognizer.get_command(text)
+                            if command == "inserisci":
+                                self.recording = False
+                                stream_closed = True
+                                try:
+                                    if stream.is_active():
+                                        stream.stop_stream()
+                                except:
+                                    pass
+                                try:
+                                    stream.close()
+                                except:
+                                    pass
+                                try:
+                                    audio.terminate()
+                                except:
+                                    pass
+                                Gdk.threads_add_idle(
+                                    GLib.PRIORITY_DEFAULT, self._insert_text
+                                )
+                                return
+                            elif command == "correggi":
+                                self.recording = False
+                                stream_closed = True
+                                try:
+                                    if stream.is_active():
+                                        stream.stop_stream()
+                                except:
+                                    pass
+                                try:
+                                    stream.close()
+                                except:
+                                    pass
+                                try:
+                                    audio.terminate()
+                                except:
+                                    pass
+                                Gdk.threads_add_idle(
+                                    GLib.PRIORITY_DEFAULT, self._correct_and_insert
+                                )
+                                return
+                            elif command == "cancella":
+                                GLib.idle_add(self._delete_last_word)
+                                recognizer = self.recognizer.create_recognizer()
+                        else:
+                            if self.popup and not self.popup.is_closed():
+                                try:
+                                    replaced_text = self.recognizer.apply_dictionary(
+                                        text
                                     )
-                                    return
-                                elif command == "correggi":
-                                    self.recording = False
-                                    stream_closed = True
-                                    try:
-                                        if stream.is_active():
-                                            stream.stop_stream()
-                                    except:
-                                        pass
-                                    try:
-                                        stream.close()
-                                    except:
-                                        pass
-                                    try:
-                                        audio.terminate()
-                                    except:
-                                        pass
-                                    Gdk.threads_add_idle(
-                                        GLib.PRIORITY_DEFAULT, self._correct_and_insert
+                                    self.current_text += " " + replaced_text
+                                    GLib.idle_add(
+                                        self._safe_append_text,
+                                        replaced_text,
                                     )
-                                    return
-                                elif command == "cancella":
-                                    GLib.idle_add(self._delete_last_word)
-                                    recognizer = self.recognizer.create_recognizer()
-                            else:
-                                if self.popup and not self.popup.is_closed():
-                                    try:
-                                        replaced_text = (
-                                            self.recognizer.apply_dictionary(text)
-                                        )
-                                        self.current_text += " " + replaced_text
-                                        GLib.idle_add(
-                                            self._safe_append_text,
-                                            replaced_text,
-                                        )
-                                    except Exception as e:
-                                        print(f"ERRORE append text: {e}")
+                                except Exception as e:
+                                    print(f"ERRORE append text: {e}")
 
                 print("DEBUG: Recording loop ended for the timout set in config.yaml")
                 self.recording = False
