@@ -1,5 +1,5 @@
 audio:
-  default_microphone: alsa_input.usb-Microsoft_Microsoft___LifeCam_HD-3000-02.pro-input-0
+  default_microphone: alsa_input.platform-avs_hdaudio.0.pro-input-1
 dictionary:
   a capo: r
   due punti: ':'
@@ -17,24 +17,24 @@ keywords:
   galileo pulisci: pulisci
   galileo scrivi: scrivi
 llm:
-  api_key: '' #in the env
+  api_key: ''
   default_model: 1
   model1: anthropic/claude-3-haiku
   model2: meta-llama/llama-3.2-3b-instruct
 settings:
-  language: it
-  multi_model_mode: "best_confidence"
   confidence_threshold: 0.7
-  primary_secondary_confidence_threshold_level: 0.15
+  language: it
+  multi_model_mode: best_confidence
   popup_position: top-right
+  primary_secondary_confidence_threshold_level: 0.15
   timeout_seconds: 6000
-  vosk_model_path: /home/marco/voice_text_insert/model/vosk-model-small-it-0.22
+  vosk_model_path: /home/marco/progetti_git/voice_text_insert/model/vosk-model-small-it-0.22
 vosk_models:
-  it:
-    path: /home/marco/voice_text_insert/model/vosk-model-small-it-0.22
-    enabled: true
-    primary: true
   en:
-    path: /home/marco/voice_text_insert/model/vosk-model-small-en-us-0.15
     enabled: true
+    path: /home/marco/progetti_git/voice_text_insert/model/vosk-model-small-en-us-0.15
     primary: false
+  it:
+    enabled: true
+    path: /home/marco/progetti_git/voice_text_insert/model/vosk-model-small-it-0.22
+    primary: true
